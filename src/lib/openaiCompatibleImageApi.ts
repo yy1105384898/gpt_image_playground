@@ -351,9 +351,11 @@ async function parseImagesApiStreamResponse(
   onPartialImage?: CallApiOptions['onPartialImage'],
 ): Promise<CallApiResult> {
   const completedItems: ImageResponseItem[] = []
+  let resultPayload: ImageApiResponse | null = null
 
   await readJsonServerSentEvents(response, (event) => {
     const type = getStringValue(event, 'type')
+    const object = getStringValue(event, 'object')
     if (type === 'image_generation.partial_image' || type === 'image_edit.partial_image') {
       const b64 = getStringValue(event, 'b64_json')
       if (b64) {
@@ -365,10 +367,19 @@ async function parseImagesApiStreamResponse(
       return
     }
 
+    if (object === 'image.generation.result' || object === 'image.edit.result') {
+      resultPayload = normalizeImageApiPayload(event)
+      return
+    }
+
     if (type === 'image_generation.completed' || type === 'image_edit.completed') {
       completedItems.push(eventToImageResponseItem(event))
     }
   })
+
+  if (resultPayload) {
+    return parseImagesApiResponse(resultPayload, mime)
+  }
 
   if (!completedItems.length) {
     throw new Error('流式接口未返回最终图片数据')
