@@ -78,6 +78,14 @@ body:
       required: true
 
   - type: input
+    id: deployment_detail
+    attributes:
+      label: 部署方式补充
+      description: 如果上面选择的是「其他」，请在此填写具体的部署方式。
+    validations:
+      required: false
+
+  - type: input
     id: browser
     attributes:
       label: 浏览器与操作系统
