@@ -57,7 +57,7 @@ const SIMPLIFIED_TEXT_PROFILE_ID = 'yy-text-profile'
 const SIMPLIFIED_IMAGE_PROFILE_ID = 'yy-image-profile'
 const SIMPLIFIED_VIDEO_PROFILE_ID = 'yy-video-profile'
 const SIMPLIFIED_VIDEO_DEFAULT_MODEL = 'grok-video-1.0'
-const PLAYGROUND_CHANNEL_CONFIG_STORAGE_KEY = 'yy-image-pro.channel-configs'
+const PLAYGROUND_CHANNEL_CONFIG_STORAGE_KEY = 'yy-image-pro.channel-configs.v2'
 
 type SimplifiedPurposeConfig = Record<PlaygroundApiPurpose, { apiKey: string; model: string }>
 type PlaygroundChannelConfigs = Record<string, Partial<SimplifiedPurposeConfig>>
@@ -138,6 +138,24 @@ function writePlaygroundChannelConfigs(configs: PlaygroundChannelConfigs) {
 
 function getStoredPurposeConfig(target: string, purpose: PlaygroundApiPurpose) {
   return readPlaygroundChannelConfigs()[target]?.[purpose]
+}
+
+function getVaultTokenForPurpose(target: string, purpose: PlaygroundApiPurpose): string {
+  const items = getTokenVaultItems(target)
+  const matcher = purpose === 'text'
+    ? /chat|对话|文本/i
+    : purpose === 'image'
+      ? /生图|图片|image|images/i
+      : /视频|video/i
+  return items.find((item) => matcher.test(item.name))?.token ?? (items.length === 1 ? items[0].token : '')
+}
+
+function resolveStoredPurposeConfig(target: string, purpose: PlaygroundApiPurpose) {
+  const stored = getStoredPurposeConfig(target, purpose)
+  return {
+    apiKey: stored?.apiKey ?? getVaultTokenForPurpose(target, purpose),
+    model: stored?.model ?? DEFAULT_SIMPLIFIED_MODELS[purpose],
+  }
 }
 
 function saveStoredPurposeConfig(target: string, purpose: PlaygroundApiPurpose, patch: Partial<{ apiKey: string; model: string }>) {
@@ -429,15 +447,10 @@ export default function SettingsModal() {
     const previousImageProfile = normalized.profiles.find((profile) => profile.id === SIMPLIFIED_IMAGE_PROFILE_ID)
     const previousVideoProfile = normalized.profiles.find((profile) => profile.id === SIMPLIFIED_VIDEO_PROFILE_ID)
     const active = getActiveApiProfile(normalized)
-    const firstTextProfile = normalized.profiles.find(isAgentTextApiProfile)
-    const firstImageProfile = normalized.profiles.find((profile) => profile.apiMode === 'images') ?? active
     const selectedChannel = getPlaygroundApiChannelTarget('image')
-    const textConfig = getStoredPurposeConfig(selectedChannel, 'text')
-    const imageConfig = getStoredPurposeConfig(selectedChannel, 'image')
-    const videoConfig = getStoredPurposeConfig(selectedChannel, 'video')
-    const textKey = textConfig?.apiKey ?? (previousTextProfile?.baseUrl === selectedChannel ? previousTextProfile.apiKey : firstTextProfile?.apiKey ?? '')
-    const imageKey = imageConfig?.apiKey ?? (previousImageProfile?.baseUrl === selectedChannel ? previousImageProfile.apiKey : firstImageProfile.baseUrl === selectedChannel ? firstImageProfile.apiKey : '')
-    const videoKey = videoConfig?.apiKey ?? (previousVideoProfile?.baseUrl === selectedChannel ? previousVideoProfile.apiKey : '')
+    const textConfig = resolveStoredPurposeConfig(selectedChannel, 'text')
+    const imageConfig = resolveStoredPurposeConfig(selectedChannel, 'image')
+    const videoConfig = resolveStoredPurposeConfig(selectedChannel, 'video')
     const otherProfiles = normalized.profiles.filter((profile) => profile.id !== SIMPLIFIED_TEXT_PROFILE_ID && profile.id !== SIMPLIFIED_IMAGE_PROFILE_ID && profile.id !== SIMPLIFIED_VIDEO_PROFILE_ID)
     const textProfile = createDefaultOpenAIProfile({
       ...(previousTextProfile ?? {}),
@@ -445,8 +458,8 @@ export default function SettingsModal() {
       name: '文本模型',
       provider: 'openai',
       baseUrl: selectedChannel,
-      apiKey: textKey,
-      model: textConfig?.model || (previousTextProfile?.baseUrl === selectedChannel ? previousTextProfile.model : firstTextProfile?.model) || DEFAULT_RESPONSES_MODEL,
+      apiKey: textConfig.apiKey,
+      model: textConfig.model || DEFAULT_RESPONSES_MODEL,
       timeout: previousTextProfile?.timeout ?? active.timeout,
       apiMode: 'responses',
       apiProxy: true,
@@ -459,8 +472,8 @@ export default function SettingsModal() {
       name: '生图模型',
       provider: 'openai',
       baseUrl: selectedChannel,
-      apiKey: imageKey,
-      model: imageConfig?.model || (previousImageProfile?.baseUrl === selectedChannel ? previousImageProfile.model : firstImageProfile.baseUrl === selectedChannel ? firstImageProfile.model : '') || DEFAULT_IMAGES_MODEL,
+      apiKey: imageConfig.apiKey,
+      model: imageConfig.model || DEFAULT_IMAGES_MODEL,
       timeout: previousImageProfile?.timeout ?? active.timeout,
       apiMode: 'images',
       apiProxy: true,
@@ -474,8 +487,8 @@ export default function SettingsModal() {
       name: '视频模型',
       provider: 'openai',
       baseUrl: selectedChannel,
-      apiKey: videoKey,
-      model: videoConfig?.model || (previousVideoProfile?.baseUrl === selectedChannel ? previousVideoProfile.model : '') || SIMPLIFIED_VIDEO_DEFAULT_MODEL,
+      apiKey: videoConfig.apiKey,
+      model: videoConfig.model || SIMPLIFIED_VIDEO_DEFAULT_MODEL,
       timeout: previousVideoProfile?.timeout ?? active.timeout,
       apiMode: 'images',
       apiProxy: true,
@@ -837,19 +850,7 @@ export default function SettingsModal() {
     if (commit) commitSettings(nextDraft)
   }
 
-  const saveSimplifiedProfilesToChannel = (target: string, source: AppSettings) => {
-    source.profiles.forEach((profile) => {
-      const purpose = SIMPLIFIED_PROFILE_PURPOSES[profile.id]
-      if (!purpose) return
-      saveStoredPurposeConfig(target, purpose, {
-        apiKey: profile.apiKey,
-        model: profile.model,
-      })
-    })
-  }
-
   const updatePlaygroundApiChannel = (target: string) => {
-    saveSimplifiedProfilesToChannel(selectedApiChannelTarget, ensureSimplifiedProfiles(draft))
     ;(['text', 'image', 'video'] as const).forEach((purpose) => {
       setPlaygroundApiChannelTarget(target, purpose)
     })
@@ -869,8 +870,8 @@ export default function SettingsModal() {
               ...profile,
               provider: 'openai',
               baseUrl: target,
-              apiKey: getStoredPurposeConfig(target, SIMPLIFIED_PROFILE_PURPOSES[profile.id])?.apiKey ?? '',
-              model: getStoredPurposeConfig(target, SIMPLIFIED_PROFILE_PURPOSES[profile.id])?.model ?? DEFAULT_SIMPLIFIED_MODELS[SIMPLIFIED_PROFILE_PURPOSES[profile.id]],
+              apiKey: resolveStoredPurposeConfig(target, SIMPLIFIED_PROFILE_PURPOSES[profile.id]).apiKey,
+              model: resolveStoredPurposeConfig(target, SIMPLIFIED_PROFILE_PURPOSES[profile.id]).model,
               apiProxy: true,
             }
           : profile
