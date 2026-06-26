@@ -8,7 +8,7 @@ import { getAtImageQuery, getImageMentionLabel, getPromptIndexFromVisibleIndex, 
 import { normalizeImageSize } from '../lib/size'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { getSafeBoundingClientRect } from '../lib/domRect'
-import { shouldUseApiProxy, setPlaygroundApiChannelTarget } from '../lib/devProxy'
+import { getPlaygroundApiChannelTarget, shouldUseApiProxy, setPlaygroundApiChannelTarget } from '../lib/devProxy'
 import { collectAgentRoundOutputImageSlots } from '../lib/agentImageReferences'
 import { useHintTooltip } from '../hooks/useHintTooltip'
 import { downloadImageEntriesAsZip, downloadImageIds, formatExportFileTime, getTaskOutputImageZipEntries } from '../lib/downloadImages'
@@ -1926,6 +1926,7 @@ export default function InputBar() {
       sizeHint={sizeHint}
       qualityHint={qualityHint}
       onOpenSizePicker={() => setShowSizePicker(true)}
+      modelTarget={getPlaygroundApiChannelTarget('image')}
       onModelChange={(target, model) => {
         setPlaygroundApiChannelTarget(target, 'image')
         const imageProfileId = settings.profiles.some((p) => p.id === 'yy-image-profile')

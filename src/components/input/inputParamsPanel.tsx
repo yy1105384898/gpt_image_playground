@@ -54,6 +54,7 @@ export default function InputParamsPanel({
   qualityHint,
   onOpenSizePicker,
   onModelChange,
+  modelTarget,
 }: {
   cols: string
   params: TaskParams
@@ -96,6 +97,7 @@ export default function InputParamsPanel({
   qualityHint: HintTooltipState
   onOpenSizePicker: () => void
   onModelChange?: (target: string, model: string) => void
+  modelTarget?: string
 }) {
   return (
     <div className={`grid ${cols} gap-2 text-xs flex-1`}>
@@ -111,6 +113,7 @@ export default function InputParamsPanel({
           <ModelSelect
             purpose="image"
             value={activeProfile.model}
+            target={modelTarget}
             fallbackModels={[activeProfile.model]}
             onSelect={onModelChange}
             className="px-2 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-white/50 dark:bg-white/[0.03] text-[11px] shadow-sm max-w-[140px]"

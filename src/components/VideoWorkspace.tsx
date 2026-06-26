@@ -2,7 +2,7 @@ import { useCallback, useRef } from 'react'
 import { useStore } from '../store'
 import { useVideoStore, type VideoTask } from '../videoStore'
 import { createVideo, pollVideo, VIDEO_MODELS, VIDEO_DURATIONS, VIDEO_ASPECTS } from '../lib/videoApi'
-import { setPlaygroundApiChannelTarget } from '../lib/devProxy'
+import { getPlaygroundApiChannelTarget, setPlaygroundApiChannelTarget } from '../lib/devProxy'
 import ModelSelect from './ModelSelect'
 
 function genLocalId(): string {
@@ -164,6 +164,7 @@ export default function VideoWorkspace() {
               <ModelSelect
                 purpose="video"
                 value={params.model}
+                target={getPlaygroundApiChannelTarget('video')}
                 fallbackModels={[...VIDEO_MODELS]}
                 onSelect={(target, model) => {
                   setPlaygroundApiChannelTarget(target, 'video')

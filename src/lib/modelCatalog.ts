@@ -27,6 +27,11 @@ const SIMPLIFIED_PROFILE_IDS: Record<PlaygroundApiPurpose, string> = {
 
 const VIDEO_RE = /video|sora|kling|veo|seedance|runway|pika|hailuo|vidu|wan2|minimax-video/i
 const IMAGE_RE = /image|flux|dall[-_ ]?e|imagen|nano[-_ ]?banana|banana|qwen.*image|stable|\bsd\d|midjourney|\bmj\b|recraft|ideogram|seedream|kolors|hunyuan.*image|grok.*image/i
+const FALLBACK_MODELS: Record<PlaygroundApiPurpose, string[]> = {
+  text: ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-4.1-mini'],
+  image: ['gpt-image-2', 'gpt-image-1', 'dall-e-3', 'flux-kontext-pro'],
+  video: ['grok-video-1.0', 'grok-video-1.5', 'veo-3', 'kling-v2.1'],
+}
 
 function classify(id: string, purpose: PlaygroundApiPurpose): boolean {
   const lower = id.toLowerCase()
@@ -70,6 +75,13 @@ async function fetchChannelModels(target: string, purpose: PlaygroundApiPurpose)
   return Array.from(new Set(ids))
 }
 
+function fallbackModels(purpose: PlaygroundApiPurpose, models: string[]): string[] {
+  return Array.from(new Set([
+    ...models.filter(Boolean),
+    ...FALLBACK_MODELS[purpose],
+  ]))
+}
+
 const cache = new Map<PlaygroundApiPurpose, ModelGroup[]>()
 const inflight = new Map<PlaygroundApiPurpose, Promise<ModelGroup[]>>()
 
@@ -84,11 +96,14 @@ export async function getModelGroups(purpose: PlaygroundApiPurpose, force = fals
           const filtered = all.filter((id) => classify(id, purpose))
           return { id: channel.id, label: channel.label, target: channel.target, models: filtered }
         } catch {
-          return { id: channel.id, label: channel.label, target: channel.target, models: [] }
+          return { id: channel.id, label: channel.label, target: channel.target, models: fallbackModels(purpose, []) }
         }
       }),
     )
-    const groups = results.filter((g) => g.models.length > 0)
+    const groups = results.map((group) => ({
+      ...group,
+      models: fallbackModels(purpose, group.models),
+    }))
     cache.set(purpose, groups)
     inflight.delete(purpose)
     return groups
