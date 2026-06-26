@@ -7,7 +7,8 @@ import { getModelGroups } from '../lib/modelCatalog'
 import { normalizeSettings } from '../lib/apiProfiles'
 import ModelSelect from './ModelSelect'
 import MarkdownRenderer from './MarkdownRenderer'
-import { CloseIcon, CopyIcon, PlusIcon, RefreshIcon, TrashIcon } from './icons'
+import Select from './Select'
+import { CopyIcon, PlusIcon, RefreshIcon, TrashIcon } from './icons'
 
 const QUICK_PROMPTS = [
   '帮我写一段商品介绍',
@@ -43,7 +44,7 @@ export default function ChatWorkspace() {
   const setModel = useChatStore((s) => s.setModel)
   const createConversation = useChatStore((s) => s.createConversation)
   const setActiveConversationId = useChatStore((s) => s.setActiveConversationId)
-  const deleteConversation = useChatStore((s) => s.deleteConversation)
+  const deleteConversationAndReturnNext = useChatStore((s) => s.deleteConversationAndReturnNext)
   const clearActiveConversation = useChatStore((s) => s.clearActiveConversation)
   const addMessage = useChatStore((s) => s.addMessage)
   const updateMessage = useChatStore((s) => s.updateMessage)
@@ -51,6 +52,7 @@ export default function ChatWorkspace() {
   const showToast = useStore((s) => s.showToast)
   const activeConversation = getActiveConversation(conversations, activeConversationId, model)
   const messages = activeConversation?.messages ?? []
+  const activeTarget = activeConversation?.channelTarget || getPlaygroundApiChannelTarget('text')
   const abortRef = useRef<AbortController | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
 
@@ -137,83 +139,75 @@ export default function ChatWorkspace() {
   }, [])
 
   const activeTitle = useMemo(() => activeConversation?.title || '新对话', [activeConversation?.title])
+  const conversationOptions = useMemo(() => [
+    { label: '新对话', value: '__new__', variant: 'action' as const },
+    ...conversations.map((conversation) => ({
+      label: conversation.title || '新对话',
+      value: conversation.id,
+      actions: [{
+        label: '删除',
+        variant: 'danger' as const,
+        onClick: () => {
+          const nextId = deleteConversationAndReturnNext(conversation.id)
+          if (!nextId) createConversation()
+        },
+      }],
+    })),
+  ], [conversations, createConversation, deleteConversationAndReturnNext])
 
   return (
-    <main data-home-main className="pb-36">
-      <div className="safe-area-x mx-auto flex max-w-7xl gap-4 px-3 pt-4 sm:px-4">
-        <aside className="hidden w-64 shrink-0 rounded-2xl border border-white/[0.08] bg-white/[0.035] p-3 lg:block">
+    <main data-home-main className="pb-48">
+      <div className="safe-area-x mx-auto max-w-7xl px-3 pt-4 sm:px-4">
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-2 rounded-2xl border border-white/[0.08] bg-white/[0.04] p-2 shadow-[0_16px_50px_rgba(0,0,0,0.18)] backdrop-blur-xl sm:flex-row sm:items-center">
           <button
             type="button"
             onClick={createConversation}
-            className="mb-3 flex w-full items-center justify-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-semibold text-black transition hover:bg-gray-200"
+            className="inline-flex h-[42px] shrink-0 items-center justify-center gap-2 rounded-xl bg-white px-4 text-sm font-semibold text-black transition hover:bg-gray-200"
           >
             <PlusIcon className="h-4 w-4" />
             新对话
           </button>
-          <div className="max-h-[calc(100vh-180px)] space-y-1 overflow-y-auto custom-scrollbar">
-            {conversations.map((conversation) => (
-              <button
-                key={conversation.id}
-                type="button"
-                onClick={() => setActiveConversationId(conversation.id)}
-                className={`group flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm transition ${conversation.id === activeConversation?.id ? 'bg-white/[0.1] text-white' : 'text-gray-400 hover:bg-white/[0.06] hover:text-gray-200'}`}
-              >
-                <span className="min-w-0 flex-1 truncate">{conversation.title}</span>
-                <span
-                  role="button"
-                  tabIndex={0}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    deleteConversation(conversation.id)
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key !== 'Enter' && event.key !== ' ') return
-                    event.preventDefault()
-                    event.stopPropagation()
-                    deleteConversation(conversation.id)
-                  }}
-                  className="rounded-md p-1 text-gray-500 opacity-0 transition hover:bg-white/[0.08] hover:text-gray-200 group-hover:opacity-100"
-                  aria-label="删除对话"
-                >
-                  <CloseIcon className="h-3.5 w-3.5" />
-                </span>
-              </button>
-            ))}
+          <div className="min-w-0 flex-1">
+            <Select
+              value={activeConversation?.id ?? ''}
+              options={conversationOptions}
+              onChange={(value) => {
+                if (value === '__new__') {
+                  createConversation()
+                  return
+                }
+                setActiveConversationId(String(value))
+              }}
+              className="h-[42px] rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 text-sm font-semibold text-gray-100 transition hover:bg-white/[0.08]"
+            />
           </div>
-        </aside>
-
-        <section className="min-w-0 flex-1">
-          <div className="mb-4 flex flex-col gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.035] p-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0">
-              <div className="truncate text-sm font-semibold text-white">{activeTitle}</div>
-              <div className="mt-1 text-xs text-gray-500">文本对话使用设置里的文本令牌和文本通道</div>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <ModelSelect
-                purpose="text"
-                value={activeConversation?.model || model || DEFAULT_CHAT_MODEL}
-                fallbackModels={[DEFAULT_CHAT_MODEL, 'gpt-4.1-mini', 'gpt-4o-mini']}
-                onSelect={(target, nextModel) => {
-                  if (target) setPlaygroundApiChannelTarget(target, 'text')
-                  setModel(nextModel, target)
-                }}
-                className="h-9 max-w-[220px] rounded-xl border border-white/[0.08] bg-black/30 px-3 text-sm text-gray-100 outline-none"
-              />
-              <button type="button" onClick={refreshModels} className="rounded-xl border border-white/[0.08] p-2 text-gray-400 hover:bg-white/[0.06] hover:text-white" aria-label="刷新模型">
-                <RefreshIcon className="h-4 w-4" />
-              </button>
-              <button type="button" onClick={copyLastAssistant} className="rounded-xl border border-white/[0.08] p-2 text-gray-400 hover:bg-white/[0.06] hover:text-white" aria-label="复制最后回复">
-                <CopyIcon className="h-4 w-4" />
-              </button>
-              <button type="button" onClick={clearActiveConversation} className="rounded-xl border border-white/[0.08] p-2 text-gray-400 hover:bg-white/[0.06] hover:text-white" aria-label="清空对话">
-                <TrashIcon className="h-4 w-4" />
-              </button>
-            </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <ModelSelect
+              purpose="text"
+              value={activeConversation?.model || model || DEFAULT_CHAT_MODEL}
+              target={activeTarget}
+              fallbackModels={[DEFAULT_CHAT_MODEL, 'gpt-4.1-mini', 'gpt-4o-mini']}
+              onSelect={(target, nextModel) => {
+                if (target) setPlaygroundApiChannelTarget(target, 'text')
+                setModel(nextModel, target)
+              }}
+              className="h-[42px] w-[150px] rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 text-sm text-gray-100 outline-none transition hover:bg-white/[0.08]"
+            />
+            <button type="button" onClick={refreshModels} className="flex h-[42px] w-[42px] items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.04] text-gray-400 transition hover:bg-white/[0.08] hover:text-white" aria-label="刷新模型">
+              <RefreshIcon className="h-4 w-4" />
+            </button>
+            <button type="button" onClick={copyLastAssistant} className="flex h-[42px] w-[42px] items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.04] text-gray-400 transition hover:bg-white/[0.08] hover:text-white" aria-label="复制最后回复">
+              <CopyIcon className="h-4 w-4" />
+            </button>
+            <button type="button" onClick={clearActiveConversation} className="flex h-[42px] w-[42px] items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.04] text-gray-400 transition hover:bg-white/[0.08] hover:text-white" aria-label="清空对话">
+              <TrashIcon className="h-4 w-4" />
+            </button>
           </div>
+        </div>
 
-          <div className="min-h-[calc(100vh-300px)] rounded-3xl border border-white/[0.08] bg-[#0b0b0d]/70 p-4 shadow-2xl shadow-black/20">
-            {messages.length === 0 ? (
-              <div className="flex min-h-[420px] flex-col items-center justify-center text-center">
+        <section className="mx-auto w-full max-w-3xl">
+          {messages.length === 0 ? (
+            <div className="flex min-h-[calc(100vh-330px)] flex-col items-center justify-center py-20 text-center">
                 <div className="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-yellow-400 text-lg font-black text-black shadow-[0_0_30px_rgba(250,204,21,0.22)]">Y</div>
                 <h2 className="text-xl font-bold text-white">你好，我是 YANGYANG 文本助手</h2>
                 <p className="mt-2 max-w-md text-sm leading-relaxed text-gray-500">写文案、改表达、做说明、整理方案都可以直接问。选择文本模型后，使用 Ctrl + Enter 发送。</p>
@@ -230,8 +224,8 @@ export default function ChatWorkspace() {
                   ))}
                 </div>
               </div>
-            ) : (
-              <div className="space-y-5">
+          ) : (
+            <div className="space-y-5 py-8">
                 {messages.map((message) => (
                   <div key={message.id} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                     <div className={`max-w-[min(760px,92%)] rounded-2xl px-4 py-3 text-sm leading-relaxed ${message.role === 'user' ? 'bg-white text-black' : message.error ? 'border border-red-500/25 bg-red-500/10 text-red-200' : 'bg-white/[0.06] text-gray-100'}`}>
@@ -243,8 +237,7 @@ export default function ChatWorkspace() {
                 ))}
                 <div ref={endRef} />
               </div>
-            )}
-          </div>
+          )}
         </section>
       </div>
 

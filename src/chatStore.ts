@@ -33,6 +33,7 @@ interface ChatState {
   createConversation: () => string
   setActiveConversationId: (id: string) => void
   deleteConversation: (id: string) => void
+  deleteConversationAndReturnNext: (id: string) => string | null
   clearActiveConversation: () => void
   addMessage: (message: ChatMessage) => void
   updateMessage: (id: string, patch: Partial<ChatMessage>) => void
@@ -105,6 +106,17 @@ export const useChatStore = create<ChatState>()(
           : state.activeConversationId
         return { conversations, activeConversationId, status: 'idle' }
       }),
+      deleteConversationAndReturnNext: (id) => {
+        let nextActiveId: string | null = null
+        set((state) => {
+          const conversations = state.conversations.filter((conversation) => conversation.id !== id)
+          nextActiveId = state.activeConversationId === id
+            ? conversations[0]?.id ?? null
+            : state.activeConversationId
+          return { conversations, activeConversationId: nextActiveId, status: 'idle' }
+        })
+        return nextActiveId
+      },
       clearActiveConversation: () => {
         const activeId = get().activeConversationId
         if (!activeId) return
