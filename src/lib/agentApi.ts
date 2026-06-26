@@ -1,6 +1,7 @@
 import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_STREAM_PARTIAL_IMAGES, type ApiProfile, type AppSettings, type ResponsesApiResponse, type ResponsesOutputItem, type TaskParams } from '../types'
 import { buildApiUrl, getProxyRequestHeaders, readClientDevProxyConfig, shouldUseApiProxy, type PlaygroundApiPurpose } from './devProxy'
 import { appendStreamingFormatHint, maybeAppendStreamingHint, getApiErrorMessage, MIME_MAP, normalizeBase64Image, pickActualParams } from './imageApiShared'
+import { sanitizeImagePromptForApi } from './promptSanitizer'
 
 export interface AgentApiResultImage {
   toolCallId?: string
@@ -853,7 +854,8 @@ export async function callBatchImageSingle(opts: {
     const referenceMapping = referenceImageDataUrls.length > 0
       ? `Attached reference images correspond to these ids, in order: ${(referenceIds ?? []).map((id) => `<ref id="${id}" />`).join(', ') || 'reference images'}.`
       : ''
-    const promptText = allowPromptRewrite ? prompt : `${PROMPT_REWRITE_GUARD_PREFIX}\n${prompt}`
+    const apiPrompt = sanitizeImagePromptForApi(prompt)
+    const promptText = allowPromptRewrite ? apiPrompt : `${PROMPT_REWRITE_GUARD_PREFIX}\n${apiPrompt}`
     const guardedPrompt = [referenceMapping, promptText].filter(Boolean).join('\n\n')
     let input: unknown
     if (referenceImageDataUrls.length > 0) {

@@ -109,10 +109,16 @@ function readStatus(payload: unknown): string {
     'data.state',
     'data.task_status',
     'data.taskStatus',
+    'data.status_code',
+    'data.statusCode',
     'result.status',
     'result.state',
+    'result.task_status',
+    'result.taskStatus',
     'output.status',
     'output.state',
+    'output.task_status',
+    'output.taskStatus',
   ])
   if (direct) return direct.toLowerCase()
   return walkStrings(payload, (value, key) => {
@@ -129,18 +135,34 @@ function readVideoUrl(payload: unknown): string | null {
     obj.url,
     obj.video_url,
     obj.videoUrl,
+    obj.video,
     obj.output,
     obj.content_url,
+    obj.contentUrl,
+    obj.download_url,
+    obj.downloadUrl,
+    obj.file_url,
+    obj.fileUrl,
     (obj.data as Record<string, unknown> | undefined)?.url,
     (obj.data as Record<string, unknown> | undefined)?.video_url,
     (obj.data as Record<string, unknown> | undefined)?.videoUrl,
+    (obj.data as Record<string, unknown> | undefined)?.video,
     (obj.data as Record<string, unknown> | undefined)?.output,
+    (obj.data as Record<string, unknown> | undefined)?.content_url,
+    (obj.data as Record<string, unknown> | undefined)?.contentUrl,
+    (obj.data as Record<string, unknown> | undefined)?.download_url,
+    (obj.data as Record<string, unknown> | undefined)?.downloadUrl,
     ((obj.data as Record<string, unknown> | undefined)?.result as Record<string, unknown> | undefined)?.url,
     ((obj.data as Record<string, unknown> | undefined)?.result as Record<string, unknown> | undefined)?.video_url,
     ((obj.data as Record<string, unknown> | undefined)?.result as Record<string, unknown> | undefined)?.videoUrl,
+    ((obj.data as Record<string, unknown> | undefined)?.result as Record<string, unknown> | undefined)?.video,
     ((obj.data as Record<string, unknown> | undefined)?.output as Record<string, unknown> | undefined)?.url,
     ((obj.data as Record<string, unknown> | undefined)?.output as Record<string, unknown> | undefined)?.video_url,
+    ((obj.data as Record<string, unknown> | undefined)?.output as Record<string, unknown> | undefined)?.videoUrl,
+    ((obj.data as Record<string, unknown> | undefined)?.output as Record<string, unknown> | undefined)?.video,
     Array.isArray(obj.urls) ? obj.urls[0] : undefined,
+    Array.isArray(obj.data) ? (obj.data[0] as Record<string, unknown> | undefined)?.url : undefined,
+    Array.isArray(obj.data) ? (obj.data[0] as Record<string, unknown> | undefined)?.video_url : undefined,
   ]
   for (const c of candidates) {
     if (typeof c === 'string' && /^https?:\/\//.test(c)) return c
@@ -153,9 +175,10 @@ function readVideoUrl(payload: unknown): string | null {
 }
 
 function normalizeStatus(raw: string): VideoStatus {
-  if (['completed', 'complete', 'succeeded', 'success', 'successful', 'done', 'finished', 'finish'].includes(raw)) return 'completed'
-  if (['failed', 'fail', 'error', 'cancelled', 'canceled', 'rejected', 'timeout'].includes(raw)) return 'failed'
-  if (['queued', 'queueing', 'pending', 'created', 'submitted', 'waiting', 'wait'].includes(raw)) return 'queued'
+  const normalized = raw.replace(/[\s_-]+/g, '').toLowerCase()
+  if (['completed', 'complete', 'succeeded', 'success', 'successful', 'done', 'finished', 'finish', 'generated'].includes(normalized)) return 'completed'
+  if (['failed', 'fail', 'error', 'cancelled', 'canceled', 'rejected', 'timeout', 'expired'].includes(normalized)) return 'failed'
+  if (['queued', 'queueing', 'pending', 'created', 'submitted', 'waiting', 'wait', 'starting', 'notstarted'].includes(normalized)) return 'queued'
   return 'processing'
 }
 
