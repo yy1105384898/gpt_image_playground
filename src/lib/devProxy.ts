@@ -125,8 +125,16 @@ export function readClientDevProxyConfig(): DevProxyConfig | null {
   )
 }
 
+function isHostedPlaygroundProxyAvailable(): boolean {
+  if (typeof window === 'undefined') return false
+  const pathname = window.location.pathname.replace(/\/+/g, '/')
+  return PLAYGROUND_API_CHANNELS.length > 0 && (pathname === '/playground' || pathname.startsWith('/playground/'))
+}
+
 export function isApiProxyAvailable(proxyConfig: DevProxyConfig | null = readClientDevProxyConfig()): boolean {
-  return readRuntimeEnv(import.meta.env.VITE_API_PROXY_AVAILABLE) === 'true' || Boolean(proxyConfig?.enabled)
+  return readRuntimeEnv(import.meta.env.VITE_API_PROXY_AVAILABLE) === 'true'
+    || Boolean(proxyConfig?.enabled)
+    || isHostedPlaygroundProxyAvailable()
 }
 
 export function isApiProxyLocked(proxyConfig: DevProxyConfig | null = readClientDevProxyConfig()): boolean {

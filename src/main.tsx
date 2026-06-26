@@ -12,9 +12,13 @@ installMobileViewportGuards()
 if ('serviceWorker' in navigator) {
   if (import.meta.env.PROD) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).catch((error) => {
-        console.error('Service worker registration failed:', error)
-      })
+      navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`)
+        .then((registration) => {
+          void registration.update()
+        })
+        .catch((error) => {
+          console.error('Service worker registration failed:', error)
+        })
     })
   } else {
     navigator.serviceWorker.getRegistrations().then((registrations) => {

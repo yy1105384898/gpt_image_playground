@@ -374,6 +374,7 @@ export default function SettingsModal() {
   const apiProxyAvailable = isApiProxyAvailable(apiProxyConfig)
   const apiProxyLocked = isApiProxyLocked(apiProxyConfig)
   const defaultConfigOnly = isDefaultConfigOnlyEnabled()
+  const playgroundManagedApiSettings = PLAYGROUND_API_CHANNELS.length > 0
   const ensureSimplifiedProfiles = useCallback((source: AppSettings): AppSettings => {
     const normalized = normalizeSettings(source)
     const previousTextProfile = normalized.profiles.find((profile) => profile.id === SIMPLIFIED_TEXT_PROFILE_ID)
@@ -450,11 +451,12 @@ export default function SettingsModal() {
   const activeCustomProviderAsync = isAsyncCustomProvider(activeCustomProvider)
   const apiProxyChecked = activeProfileApiProxyEligible && (apiProxyLocked || activeProfile.apiProxy)
   const apiProxyEnabled = apiProxyAvailable && activeProfileApiProxyEligible && apiProxyChecked
-  const simplifiedApiSettings = apiProxyLocked && defaultConfigOnly
+  const simplifiedApiSettings = playgroundManagedApiSettings || (apiProxyLocked && defaultConfigOnly)
   const simplifiedSettings = simplifiedApiSettings ? ensureSimplifiedProfiles(draft) : draft
   const simplifiedTextProfile = simplifiedSettings.profiles.find((profile) => profile.id === SIMPLIFIED_TEXT_PROFILE_ID) ?? null
   const simplifiedImageProfile = simplifiedSettings.profiles.find((profile) => profile.id === SIMPLIFIED_IMAGE_PROFILE_ID) ?? activeProfile
   const simplifiedVideoProfile = simplifiedSettings.profiles.find((profile) => profile.id === SIMPLIFIED_VIDEO_PROFILE_ID) ?? null
+  const selectedApiChannelTarget = apiChannelTargets.image || getPlaygroundApiChannelTarget('image')
   const defaultProviderOrder = ['openai', 'fal', ...draft.customProviders.map(p => p.id)]
   const providerOrder = draft.providerOrder || defaultProviderOrder
 
@@ -779,30 +781,39 @@ export default function SettingsModal() {
     if (commit) commitSettings(nextDraft)
   }
 
-  const updatePlaygroundApiChannel = (target: string, purpose: PlaygroundApiPurpose) => {
-    setPlaygroundApiChannelTarget(target, purpose)
-    setApiChannelTargets({
-      text: getPlaygroundApiChannelTarget('text'),
-      image: getPlaygroundApiChannelTarget('image'),
-      video: getPlaygroundApiChannelTarget('video'),
+  const updatePlaygroundApiChannel = (target: string) => {
+    ;(['text', 'image', 'video'] as const).forEach((purpose) => {
+      setPlaygroundApiChannelTarget(target, purpose)
     })
-    const simplifiedProfileId = purpose === 'text'
-      ? SIMPLIFIED_TEXT_PROFILE_ID
-      : purpose === 'video'
-      ? SIMPLIFIED_VIDEO_PROFILE_ID
-      : SIMPLIFIED_IMAGE_PROFILE_ID
-    updateSimplifiedProfile(simplifiedProfileId, {
-      provider: 'openai',
-      baseUrl: target,
-      apiProxy: true,
-    }, true)
+    setApiChannelTargets({
+      text: target,
+      image: target,
+      video: target,
+    })
+    const baseDraft = ensureSimplifiedProfiles(draft)
+    const nextDraft = normalizeSettings({
+      ...baseDraft,
+      profiles: baseDraft.profiles.map((profile) => (
+        profile.id === SIMPLIFIED_TEXT_PROFILE_ID ||
+        profile.id === SIMPLIFIED_IMAGE_PROFILE_ID ||
+        profile.id === SIMPLIFIED_VIDEO_PROFILE_ID
+          ? { ...profile, provider: 'openai', baseUrl: target, apiProxy: true }
+          : profile
+      )),
+      activeProfileId: SIMPLIFIED_IMAGE_PROFILE_ID,
+      agentApiConfigMode: 'hybrid',
+      agentTextProfileId: SIMPLIFIED_TEXT_PROFILE_ID,
+      agentImageProfileId: SIMPLIFIED_IMAGE_PROFILE_ID,
+    })
+    setDraft(nextDraft)
+    commitSettings(nextDraft)
   }
 
   const refreshTokenVault = () => setTokenVaultVersion((version) => version + 1)
 
   const getTokenVaultName = (purpose: PlaygroundApiPurpose) => {
     const profile = purpose === 'text' ? simplifiedTextProfile : purpose === 'video' ? simplifiedVideoProfile : simplifiedImageProfile
-    return tokenVaultNames[purpose] ?? `${getTokenVaultChannelLabel(apiChannelTargets[purpose])}${profile?.apiKey?.trim() ? ' 当前令牌' : ' 令牌'}`
+    return tokenVaultNames[purpose] ?? `${getTokenVaultChannelLabel(selectedApiChannelTarget)}${profile?.apiKey?.trim() ? ' 当前令牌' : ' 令牌'}`
   }
 
   const saveCurrentTokenToVault = (purpose: PlaygroundApiPurpose, profile: ApiProfile) => {
@@ -811,7 +822,7 @@ export default function SettingsModal() {
       showToast('先填写令牌再保存到令牌库', 'info')
       return
     }
-    saveTokenVaultItem(apiChannelTargets[purpose], getTokenVaultName(purpose), token)
+    saveTokenVaultItem(selectedApiChannelTarget, getTokenVaultName(purpose), token)
     setTokenVaultNames((names) => ({ ...names, [purpose]: '' }))
     refreshTokenVault()
     showToast('已保存到当前通道令牌库', 'success')
@@ -1430,12 +1441,12 @@ export default function SettingsModal() {
             
             {activeTab === 'api' && (
               simplifiedApiSettings ? (
-              <div className="mx-auto flex w-full max-w-2xl flex-col gap-4">
+              <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <h4 className="text-base font-bold text-gray-900 dark:text-gray-50">访问令牌</h4>
                     <p className="mt-1 text-sm leading-relaxed text-gray-500 dark:text-gray-400">
-                      对话读取文本令牌；图片页和 Agent 生图工具读取生图令牌。
+                      先选择厂商通道；下面分别配置对话、生图、视频令牌。
                     </p>
                   </div>
                   <span className="shrink-0 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
@@ -1443,23 +1454,52 @@ export default function SettingsModal() {
                   </span>
                 </div>
 
+                <div className="rounded-2xl border border-gray-200/70 bg-white/85 p-5 shadow-sm dark:border-white/[0.08] dark:bg-white/[0.03]">
+                  <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <div className="text-sm font-bold text-gray-900 dark:text-gray-50">厂商</div>
+                      <div data-selectable-text className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
+                        NewAPI / SubAPI 统一切换，下面三类模型各自读取对应令牌。
+                      </div>
+                    </div>
+                    <span className="w-fit rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-600 dark:bg-white/[0.08] dark:text-gray-300">
+                      {getTokenVaultChannelLabel(selectedApiChannelTarget)}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 rounded-xl bg-gray-100/80 p-1 dark:bg-black/20">
+                    {PLAYGROUND_API_CHANNELS.map((channel) => {
+                      const checked = selectedApiChannelTarget === channel.target
+                      return (
+                        <button
+                          key={channel.id}
+                          type="button"
+                          onClick={() => updatePlaygroundApiChannel(channel.target)}
+                          className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${checked ? 'bg-white text-blue-600 shadow-sm dark:bg-white/[0.1] dark:text-blue-300' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100'}`}
+                        >
+                          {channel.label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+
                 {([
                   {
                     purpose: 'text' as const,
-                    title: '文本模型',
-                    description: 'Agent 对话、标题生成使用这组通道和令牌。',
+                    title: '对话模型',
+                    description: '对话页读取文本令牌。',
                     profile: simplifiedTextProfile,
                   },
                   {
                     purpose: 'image' as const,
                     title: '生图模型',
-                    description: '图片页、批量生图、Agent 生图工具使用这组通道和令牌。',
+                    description: '图片页读取生图令牌。',
                     profile: simplifiedImageProfile,
                   },
                   {
                     purpose: 'video' as const,
                     title: '视频模型',
-                    description: '视频页生成（grok-video 等）使用这组通道和令牌。',
+                    description: '视频页读取视频令牌。',
                     profile: simplifiedVideoProfile,
                   },
                 ]).map(({ purpose, title, description, profile }) => profile ? (
@@ -1475,25 +1515,6 @@ export default function SettingsModal() {
                     </div>
 
                     <div className="space-y-4">
-                      <div>
-                        <span className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-200">API 通道</span>
-                        <div className="grid grid-cols-2 gap-2 rounded-xl bg-gray-100/80 p-1 dark:bg-black/20">
-                          {PLAYGROUND_API_CHANNELS.map((channel) => {
-                            const checked = apiChannelTargets[purpose] === channel.target
-                            return (
-                              <button
-                                key={channel.id}
-                                type="button"
-                                onClick={() => updatePlaygroundApiChannel(channel.target, purpose)}
-                                className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${checked ? 'bg-white text-blue-600 shadow-sm dark:bg-white/[0.1] dark:text-blue-300' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100'}`}
-                              >
-                                {channel.label}
-                              </button>
-                            )
-                          })}
-                        </div>
-                      </div>
-
                       <label className="block">
                         <span className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-200">{title}访问令牌</span>
                         <div className="relative">
@@ -1520,10 +1541,10 @@ export default function SettingsModal() {
                       <div className="rounded-xl border border-gray-200/70 bg-gray-50/80 p-3 dark:border-white/[0.08] dark:bg-black/20">
                         <div className="mb-2 flex items-center justify-between gap-2">
                           <span className="text-xs font-semibold text-gray-600 dark:text-gray-300">
-                            {getTokenVaultChannelLabel(apiChannelTargets[purpose])} 令牌库
+                            {getTokenVaultChannelLabel(selectedApiChannelTarget)} 令牌库
                           </span>
                           <span className="text-[11px] text-gray-400">
-                            {getTokenVaultItems(apiChannelTargets[purpose]).length} 个
+                            {getTokenVaultItems(selectedApiChannelTarget).length} 个
                           </span>
                         </div>
                         <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
@@ -1549,7 +1570,7 @@ export default function SettingsModal() {
                             }}
                             options={[
                               { label: '选择已保存令牌', value: '' },
-                              ...getTokenVaultItems(apiChannelTargets[purpose]).map((item) => ({
+                              ...getTokenVaultItems(selectedApiChannelTarget).map((item) => ({
                                 label: `${item.name} · ${maskToken(item.token)}`,
                                 value: item.token,
                               })),

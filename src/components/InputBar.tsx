@@ -400,7 +400,6 @@ export default function InputBar() {
   const setSettings = useStore((s) => s.setSettings)
   const reusedTaskApiProfileId = useStore((s) => s.reusedTaskApiProfileId)
   const setShowSettings = useStore((s) => s.setShowSettings)
-  const setShowPromptLibrary = useStore((s) => s.setShowPromptLibrary)
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
   const showToast = useStore((s) => s.showToast)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
@@ -1929,9 +1928,12 @@ export default function InputBar() {
       onOpenSizePicker={() => setShowSizePicker(true)}
       onModelChange={(target, model) => {
         setPlaygroundApiChannelTarget(target, 'image')
+        const imageProfileId = settings.profiles.some((p) => p.id === 'yy-image-profile')
+          ? 'yy-image-profile'
+          : activeProfile.id
         setSettings({
           profiles: settings.profiles.map((p) =>
-            p.id === activeProfile.id ? { ...p, model, baseUrl: target } : p,
+            p.id === imageProfileId ? { ...p, model, baseUrl: target } : p,
           ),
         })
       }}
@@ -2107,17 +2109,7 @@ export default function InputBar() {
 
           {/* 参数 + 按钮 */}
           <div className="mt-3">
-            <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <button
-                type="button"
-                onClick={() => setShowPromptLibrary(true)}
-                className="inline-flex w-fit items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.06] px-3 py-1.5 text-xs font-medium text-gray-200 transition-colors hover:bg-white/[0.1]"
-              >
-                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5h16M4 12h10M4 19h16" />
-                </svg>
-                提示词库
-              </button>
+            <div className="mb-3 flex justify-end">
               <div className="rounded-full bg-yellow-400/12 px-3 py-1.5 text-[11px] font-medium text-yellow-200 ring-1 ring-yellow-300/20">
                 生成的图片和视频仅临时保存，请及时下载或收藏。
               </div>
