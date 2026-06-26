@@ -922,7 +922,10 @@ export default function SettingsModal() {
     void getChannelModels(target, purpose, true)
       .then((models) => {
         const selected = getSelectedModels(target, purpose)
-        if (!selected.length) setSelectedModels(target, purpose, getDefaultSelectedModels(models, purpose))
+        const actualModelSet = new Set(models)
+        const sanitizedSelected = selected.filter((model) => actualModelSet.has(model))
+        if (sanitizedSelected.length !== selected.length) setSelectedModels(target, purpose, sanitizedSelected)
+        if (!sanitizedSelected.length) setSelectedModels(target, purpose, getDefaultSelectedModels(models, purpose))
         setModelPickerState((state) => ({ ...state, [key]: { loading: false, models } }))
         setModelPickerVersion((version) => version + 1)
         showToast('模型已读取', 'success')

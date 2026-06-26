@@ -165,7 +165,6 @@ export default function VideoWorkspace() {
                 purpose="video"
                 value={params.model}
                 target={getPlaygroundApiChannelTarget('video')}
-                fallbackModels={[...VIDEO_MODELS]}
                 onSelect={(target, model) => {
                   setPlaygroundApiChannelTarget(target, 'video')
                   setParams({ model })

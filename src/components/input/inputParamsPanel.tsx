@@ -114,7 +114,6 @@ export default function InputParamsPanel({
             purpose="image"
             value={activeProfile.model}
             target={modelTarget}
-            fallbackModels={[activeProfile.model]}
             onSelect={onModelChange}
             className="yy-model-select px-2 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-white/50 dark:bg-white/[0.03] text-[11px] shadow-sm max-w-[140px]"
           />

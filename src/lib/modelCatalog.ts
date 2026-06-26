@@ -29,11 +29,6 @@ const SIMPLIFIED_PROFILE_IDS: Record<PlaygroundApiPurpose, string> = {
 
 const VIDEO_RE = /video|sora|kling|veo|seedance|runway|pika|hailuo|vidu|wan2|minimax-video/i
 const IMAGE_RE = /image|flux|dall[-_ ]?e|imagen|nano[-_ ]?banana|banana|qwen.*image|stable|\bsd\d|midjourney|\bmj\b|recraft|ideogram|seedream|kolors|hunyuan.*image|grok.*image/i
-const FALLBACK_MODELS: Record<PlaygroundApiPurpose, string[]> = {
-  text: ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-4.1-mini'],
-  image: ['gpt-image-2', 'gpt-image-1', 'dall-e-3', 'flux-kontext-pro'],
-  video: ['grok-video-1.0', 'grok-video-1.5', 'veo-3', 'kling-v2.1'],
-}
 const SELECTED_MODELS_STORAGE_KEY = 'yy-image-pro.selected-models'
 
 function selectedModelsKey(target: string, purpose: PlaygroundApiPurpose) {
@@ -67,7 +62,7 @@ export function setSelectedModels(target: string, purpose: PlaygroundApiPurpose,
   window.localStorage.setItem(SELECTED_MODELS_STORAGE_KEY, JSON.stringify(state))
 }
 
-function classify(id: string, purpose: PlaygroundApiPurpose): boolean {
+export function isModelForPurpose(id: string, purpose: PlaygroundApiPurpose): boolean {
   const lower = id.toLowerCase()
   if (purpose === 'video') return VIDEO_RE.test(lower)
   if (purpose === 'image') return !VIDEO_RE.test(lower) && IMAGE_RE.test(lower)
@@ -76,13 +71,12 @@ function classify(id: string, purpose: PlaygroundApiPurpose): boolean {
 }
 
 export function getDefaultSelectedModels(models: string[], purpose: PlaygroundApiPurpose): string[] {
-  const selected = models.filter((model) => {
+  return models.filter((model) => {
     const lower = model.toLowerCase()
     if (purpose === 'image') return lower.includes('image')
     if (purpose === 'video') return lower.includes('video')
     return !lower.includes('image') && !lower.includes('video')
   })
-  return selected.length ? selected : fallbackModels(purpose, []).filter((model) => models.includes(model))
 }
 
 function authHeader(apiKey: string): string {
@@ -126,22 +120,14 @@ export async function getChannelModels(target: string, purpose: PlaygroundApiPur
   const task = (async () => {
     try {
       const all = await fetchChannelModels(target, purpose)
-      const models = fallbackModels(purpose, all)
-      channelModelCache.set(key, models)
-      return models
+      channelModelCache.set(key, all)
+      return all
     } finally {
       channelModelInflight.delete(key)
     }
   })()
   channelModelInflight.set(key, task)
   return task
-}
-
-function fallbackModels(purpose: PlaygroundApiPurpose, models: string[]): string[] {
-  return Array.from(new Set([
-    ...models.filter(Boolean),
-    ...FALLBACK_MODELS[purpose],
-  ]))
 }
 
 const cache = new Map<PlaygroundApiPurpose, ModelGroup[]>()
@@ -156,16 +142,16 @@ export async function getModelGroups(purpose: PlaygroundApiPurpose, force = fals
         try {
           const allModels = await getChannelModels(channel.target, purpose, force)
           const selected = getSelectedModels(channel.target, purpose)
-          const allowed = selected.length ? allModels.filter((id) => selected.includes(id)) : allModels.filter((id) => classify(id, purpose))
+          const allowed = selected.length ? allModels.filter((id) => selected.includes(id)) : allModels.filter((id) => isModelForPurpose(id, purpose))
           return { id: channel.id, label: channel.label, target: channel.target, models: allowed }
         } catch {
-          return { id: channel.id, label: channel.label, target: channel.target, models: fallbackModels(purpose, []) }
+          return { id: channel.id, label: channel.label, target: channel.target, models: [] }
         }
       }),
     )
     const groups = results.map((group) => ({
       ...group,
-      models: fallbackModels(purpose, group.models),
+      models: group.models,
     }))
     cache.set(purpose, groups)
     inflight.delete(purpose)
