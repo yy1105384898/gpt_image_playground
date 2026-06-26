@@ -434,9 +434,16 @@ input[type="number"] {
   color: #f4f4f5;
 }
 
-.yy-shell select option {
+.yy-shell select option,
+.yy-shell select optgroup,
+.yy-model-select option,
+.yy-model-select optgroup {
   background: #18181b;
   color: #f4f4f5;
+}
+
+.yy-model-select optgroup {
+  color: rgba(244, 244, 245, 0.72);
 }
 
 .yy-shell label > span {

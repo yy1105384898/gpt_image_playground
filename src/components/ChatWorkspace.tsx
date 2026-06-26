@@ -191,7 +191,7 @@ export default function ChatWorkspace() {
                 if (target) setPlaygroundApiChannelTarget(target, 'text')
                 setModel(nextModel, target)
               }}
-              className="h-[42px] w-[150px] rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 text-sm text-gray-100 outline-none transition hover:bg-white/[0.08]"
+              className="yy-model-select h-[42px] w-[150px] rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 text-sm text-gray-100 outline-none transition hover:bg-white/[0.08]"
             />
             <button type="button" onClick={refreshModels} className="flex h-[42px] w-[42px] items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.04] text-gray-400 transition hover:bg-white/[0.08] hover:text-white" aria-label="刷新模型">
               <RefreshIcon className="h-4 w-4" />

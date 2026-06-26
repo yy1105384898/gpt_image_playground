@@ -8,6 +8,7 @@ interface ModelSelectProps {
   purpose: PlaygroundApiPurpose
   value: string
   target?: string
+  showAllChannels?: boolean
   // Called with the chosen channel target (厂商) and model id.
   onSelect: (target: string, model: string) => void
   // Shown when the relay returns no models (offline / unreachable).
@@ -18,13 +19,14 @@ interface ModelSelectProps {
 
 // A native <select> grouped by 厂商 (channel) → its real models, read from
 // the relay's /v1/models. Falls back to a static list when nothing loads.
-export default function ModelSelect({ purpose, value, target, onSelect, fallbackModels = [], enabled = true, className }: ModelSelectProps) {
+export default function ModelSelect({ purpose, value, target, showAllChannels = false, onSelect, fallbackModels = [], enabled = true, className }: ModelSelectProps) {
   const { groups, loading } = useModelGroups(purpose, enabled)
   const activeTarget = target || getPlaygroundApiChannelTarget(purpose)
-  const displayGroups = useMemo(() => groups.map((group) => {
+  const activeGroups = useMemo(() => showAllChannels ? groups : groups.filter((group) => group.target === activeTarget), [activeTarget, groups, showAllChannels])
+  const displayGroups = useMemo(() => activeGroups.map((group) => {
     if (group.target !== activeTarget || !value || group.models.includes(value)) return group
     return { ...group, models: [value, ...group.models] }
-  }), [activeTarget, groups, value])
+  }), [activeGroups, activeTarget, value])
 
   const hasGroups = displayGroups.length > 0
   const selectValue = useMemo(() => {
@@ -47,7 +49,7 @@ export default function ModelSelect({ purpose, value, target, onSelect, fallback
         const [target, model] = e.target.value.split(SEP)
         if (model) onSelect(target, model)
       }}
-      className={className ?? 'rounded-lg border border-white/[0.08] bg-white/[0.04] px-2 py-1.5 text-xs text-gray-100 outline-none'}
+      className={className ?? 'yy-model-select rounded-lg border border-white/[0.08] bg-white/[0.04] px-2 py-1.5 text-xs text-gray-100 outline-none'}
       title={value}
     >
       {!hasGroups && (
