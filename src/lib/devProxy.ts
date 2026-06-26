@@ -9,6 +9,45 @@ export interface DevProxyConfig {
 }
 
 const DEFAULT_PROXY_PREFIX = '/api-proxy'
+export const PLAYGROUND_API_CHANNELS = [
+  { id: 'newapi', label: 'NewAPI', target: 'https://yynewapi.yangyangnj.top/v1' },
+  { id: 'subapi', label: 'SubAPI', target: 'https://yysubapi.yangyangnj.top/v1' },
+] as const
+
+export type PlaygroundApiPurpose = 'text' | 'image' | 'video'
+export const PLAYGROUND_API_CHANNEL_STORAGE_KEY = 'yy-image-pro.api-channel'
+export const PLAYGROUND_API_CHANNEL_STORAGE_KEYS: Record<PlaygroundApiPurpose, string> = {
+  text: 'yy-image-pro.text-api-channel',
+  image: 'yy-image-pro.image-api-channel',
+  video: 'yy-image-pro.video-api-channel',
+}
+
+function normalizeApiChannelTarget(target: string | null): string {
+  return PLAYGROUND_API_CHANNELS.find((channel) => channel.target === target || channel.id === target)?.target ?? PLAYGROUND_API_CHANNELS[0].target
+}
+
+export function getPlaygroundApiChannelTarget(purpose: PlaygroundApiPurpose = 'image'): string {
+  if (typeof window === 'undefined') return PLAYGROUND_API_CHANNELS[0].target
+  const saved = window.localStorage.getItem(PLAYGROUND_API_CHANNEL_STORAGE_KEYS[purpose])
+    ?? window.localStorage.getItem(PLAYGROUND_API_CHANNEL_STORAGE_KEY)
+  return normalizeApiChannelTarget(saved)
+}
+
+export function setPlaygroundApiChannelTarget(target: string, purpose: PlaygroundApiPurpose = 'image') {
+  if (typeof window === 'undefined') return
+  const safeTarget = normalizeApiChannelTarget(target)
+  window.localStorage.setItem(PLAYGROUND_API_CHANNEL_STORAGE_KEYS[purpose], safeTarget)
+  if (purpose === 'image') {
+    window.localStorage.setItem(PLAYGROUND_API_CHANNEL_STORAGE_KEY, safeTarget)
+  }
+}
+
+export function getProxyRequestHeaders(purpose: PlaygroundApiPurpose = 'image'): Record<string, string> {
+  return {
+    'X-YY-API-Target': getPlaygroundApiChannelTarget(purpose),
+    'X-YY-API-Purpose': purpose,
+  }
+}
 
 export function normalizeBaseUrl(baseUrl: string): string {
   const trimmed = baseUrl.trim()

@@ -10,6 +10,7 @@ import Header from './components/Header'
 import SearchBar from './components/SearchBar'
 import TaskGrid from './components/TaskGrid'
 import AgentWorkspace from './components/AgentWorkspace'
+import VideoWorkspace from './components/VideoWorkspace'
 import InputBar from './components/InputBar'
 import DetailModal from './components/DetailModal'
 import Lightbox from './components/Lightbox'
@@ -19,6 +20,7 @@ import Toast from './components/Toast'
 import MaskEditorModal from './components/MaskEditorModal'
 import ImageContextMenu from './components/ImageContextMenu'
 import SupportPromptModal from './components/SupportPromptModal'
+import PromptLibraryModal from './components/PromptLibraryModal'
 import { FavoriteCollectionPickerModal, FavoriteCollectionsView, ManageCollectionsModal } from './components/FavoriteCollections'
 import { useGlobalClickSuppression } from './lib/clickSuppression'
 
@@ -108,10 +110,12 @@ export default function App() {
   }, [])
 
   return (
-    <>
+    <div className="yy-shell min-h-screen text-gray-100">
       <Header />
       {appMode === 'agent' ? (
         <AgentWorkspace />
+      ) : appMode === 'video' ? (
+        <VideoWorkspace />
       ) : (
         <main data-home-main data-drag-select-surface className="pb-48">
           <div className="safe-area-x max-w-7xl mx-auto">
@@ -120,17 +124,18 @@ export default function App() {
           </div>
         </main>
       )}
-      <InputBar />
+      {appMode !== 'video' && <InputBar />}
       <DetailModal />
       <Lightbox />
       <SettingsModal />
       <ConfirmDialog />
       <SupportPromptModal />
+      <PromptLibraryModal />
       <FavoriteCollectionPickerModal />
       <ManageCollectionsModal />
       <Toast />
       <MaskEditorModal />
       <ImageContextMenu />
-    </>
+    </div>
   )
 }

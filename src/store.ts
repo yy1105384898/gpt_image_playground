@@ -886,6 +886,8 @@ interface AppState {
   showSettings: boolean
   settingsTabRequest: SettingsTab | null
   setShowSettings: (v: boolean, tab?: SettingsTab) => void
+  showPromptLibrary: boolean
+  setShowPromptLibrary: (v: boolean) => void
   supportPromptOpen: boolean
   supportPromptDismissed: boolean
   supportPromptSkippedForImportedData: boolean
@@ -1163,6 +1165,22 @@ export const useStore = create<AppState>()(
             agentEditingRoundId: null,
             ...(state.appMode === 'agent' ? restoreGalleryInputDraftState(galleryInputDraft) : {}),
           }))
+          return
+        }
+
+        if (appMode === 'video') {
+          const state = get()
+          const agentInputDrafts = saveActiveAgentInputDrafts(state)
+          const galleryInputDraft = saveGalleryInputDraft(state)
+          set({
+            appMode: 'video',
+            agentInputDrafts,
+            galleryInputDraft,
+            agentMobileHeaderVisible: true,
+            selectedTaskIds: [],
+            selectedFavoriteCollectionIds: [],
+            agentEditingRoundId: null,
+          })
           return
         }
 
@@ -1592,6 +1610,11 @@ export const useStore = create<AppState>()(
           ...(settingsTabRequest ? { settingsTabRequest } : {}),
           ...(!showSettings ? { settingsTabRequest: null } : {}),
         })
+      },
+      showPromptLibrary: false,
+      setShowPromptLibrary: (showPromptLibrary) => {
+        if (showPromptLibrary) dismissAllTooltips()
+        set({ showPromptLibrary })
       },
       supportPromptOpen: false,
       supportPromptDismissed: false,

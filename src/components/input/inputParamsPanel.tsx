@@ -2,6 +2,7 @@ import type { ApiProfile, TaskParams } from '../../types'
 import { dismissAllTooltips } from '../../lib/tooltipDismiss'
 import Select from '../Select'
 import ButtonTooltip from './buttonTooltip'
+import ModelSelect from '../ModelSelect'
 
 interface HintTooltipState {
   visible: boolean
@@ -18,6 +19,7 @@ export default function InputParamsPanel({
   activeProfile,
   isFalProvider,
   isFalTextToImage,
+  hasInputImages,
   displaySize,
   qualityOptions,
   selectClass,
@@ -51,6 +53,7 @@ export default function InputParamsPanel({
   sizeHint,
   qualityHint,
   onOpenSizePicker,
+  onModelChange,
 }: {
   cols: string
   params: TaskParams
@@ -58,6 +61,7 @@ export default function InputParamsPanel({
   activeProfile: ApiProfile
   isFalProvider: boolean
   isFalTextToImage: boolean
+  hasInputImages: boolean
   displaySize: string
   qualityOptions: Array<{ label: string; value: string }>
   selectClass: string
@@ -91,9 +95,32 @@ export default function InputParamsPanel({
   sizeHint: HintTooltipState
   qualityHint: HintTooltipState
   onOpenSizePicker: () => void
+  onModelChange?: (target: string, model: string) => void
 }) {
   return (
     <div className={`grid ${cols} gap-2 text-xs flex-1`}>
+      <label className="flex flex-col gap-0.5">
+        <span className="text-gray-400 dark:text-gray-500 ml-1">类型</span>
+        <div className="px-3 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-white/50 dark:bg-white/[0.03] text-xs shadow-sm">
+          {hasInputImages ? '图生图' : '文生图'}
+        </div>
+      </label>
+      <label className="flex flex-col gap-0.5">
+        <span className="text-gray-400 dark:text-gray-500 ml-1">模型</span>
+        {onModelChange ? (
+          <ModelSelect
+            purpose="image"
+            value={activeProfile.model}
+            fallbackModels={[activeProfile.model]}
+            onSelect={onModelChange}
+            className="px-2 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-white/50 dark:bg-white/[0.03] text-[11px] shadow-sm max-w-[140px]"
+          />
+        ) : (
+          <div className="px-2 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-white/50 dark:bg-white/[0.03] text-[11px] shadow-sm whitespace-nowrap" title={activeProfile.model}>
+            {activeProfile.model || 'GPT Image 2 1K'}
+          </div>
+        )}
+      </label>
       <label
         className="relative flex flex-col gap-0.5"
         onMouseEnter={sizeHint.show}

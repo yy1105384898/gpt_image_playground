@@ -46,6 +46,7 @@ export default function SearchBar() {
   const rootRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const searchQuery = useStore((s) => s.searchQuery)
+  const tasks = useStore((s) => s.tasks)
   const setSearchQuery = useStore((s) => s.setSearchQuery)
   const filterStatus = useStore((s) => s.filterStatus)
   const setFilterStatus = useStore((s) => s.setFilterStatus)
@@ -126,6 +127,10 @@ export default function SearchBar() {
     if (val === filterStatus) return
     setFilterStatus(val)
     clearSelection()
+  }
+
+  if (!tasks.length && !searchQuery && !filterFavorite && filterStatus === 'all') {
+    return null
   }
 
   return (

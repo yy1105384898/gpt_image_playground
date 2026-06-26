@@ -8,6 +8,7 @@ import { getAtImageQuery, getImageMentionLabel, getPromptIndexFromVisibleIndex, 
 import { normalizeImageSize } from '../lib/size'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { getSafeBoundingClientRect } from '../lib/domRect'
+import { shouldUseApiProxy, setPlaygroundApiChannelTarget } from '../lib/devProxy'
 import { collectAgentRoundOutputImageSlots } from '../lib/agentImageReferences'
 import { useHintTooltip } from '../hooks/useHintTooltip'
 import { downloadImageEntriesAsZip, downloadImageIds, formatExportFileTime, getTaskOutputImageZipEntries } from '../lib/downloadImages'
@@ -399,6 +400,7 @@ export default function InputBar() {
   const setSettings = useStore((s) => s.setSettings)
   const reusedTaskApiProfileId = useStore((s) => s.reusedTaskApiProfileId)
   const setShowSettings = useStore((s) => s.setShowSettings)
+  const setShowPromptLibrary = useStore((s) => s.setShowPromptLibrary)
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
   const showToast = useStore((s) => s.showToast)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
@@ -710,7 +712,7 @@ export default function InputBar() {
       ? settings
       : normalizeSettings({ ...settings, activeProfileId: activeProfile.id })
   ), [activeProfile.id, settingsActiveProfile.id, settings])
-  const hasSubmitApiConfig = Boolean(activeProfile.apiKey)
+  const hasSubmitApiConfig = Boolean(activeProfile.apiKey || shouldUseApiProxy(activeProfile.apiProxy))
   const canSubmit = Boolean(prompt.trim() && hasSubmitApiConfig && !activeAgentIsRunning)
   const submitButtonAriaLabel = activeAgentIsRunning
     ? '停止生成'
@@ -718,7 +720,7 @@ export default function InputBar() {
     ? maskDraft ? '遮罩编辑' : '生成图像'
     : '请先配置 API'
   const submitTooltipText = activeAgentIsRunning ? '停止生成' : '尚未完成 API 配置，请在右上角设置中进行'
-  const promptPlaceholder = '描述你想生成的图片，可输入 @ 来指定参考图...'
+  const promptPlaceholder = '描述你想生成的图片，可输入 @ 指定参考图...'
   const submitCurrentMode = useCallback(() => {
     if (appMode === 'agent') {
       void submitAgentMessage()
@@ -1891,6 +1893,7 @@ export default function InputBar() {
       activeProfile={activeProfile}
       isFalProvider={isFalProvider}
       isFalTextToImage={isFalTextToImage}
+      hasInputImages={inputImages.length > 0}
       displaySize={displaySize}
       qualityOptions={qualityOptions}
       selectClass={selectClass}
@@ -1924,6 +1927,14 @@ export default function InputBar() {
       sizeHint={sizeHint}
       qualityHint={qualityHint}
       onOpenSizePicker={() => setShowSizePicker(true)}
+      onModelChange={(target, model) => {
+        setPlaygroundApiChannelTarget(target, 'image')
+        setSettings({
+          profiles: settings.profiles.map((p) =>
+            p.id === activeProfile.id ? { ...p, model, baseUrl: target } : p,
+          ),
+        })
+      }}
     />
   )
 
@@ -1943,7 +1954,7 @@ export default function InputBar() {
         />
       )}
 
-      <div data-input-bar className="fixed bottom-4 sm:bottom-6 left-1/2 -translate-x-1/2 z-30 w-full max-w-4xl px-3 sm:px-4 transition-all duration-300">
+      <div data-input-bar className="fixed bottom-4 sm:bottom-6 left-1/2 -translate-x-1/2 z-30 w-full max-w-5xl px-3 sm:px-4 transition-all duration-300">
         <InputBatchBars
           showFavoriteCollectionBatchBar={showFavoriteCollectionBatchBar}
           showTaskBatchBar={showTaskBatchBar}
@@ -1961,7 +1972,7 @@ export default function InputBar() {
           onDownloadSelected={handleDownloadSelected}
           onDeleteSelected={handleDeleteSelected}
         />
-        <div ref={cardRef} className="bg-white/70 dark:bg-gray-900/70 backdrop-blur-2xl border border-white/50 dark:border-white/[0.08] shadow-[0_8px_30px_rgb(0,0,0,0.08)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.3)] rounded-2xl sm:rounded-3xl p-3 sm:p-4 ring-1 ring-black/5 dark:ring-white/10">
+        <div ref={cardRef} className="bg-[#101012]/92 backdrop-blur-2xl border border-white/[0.09] shadow-[0_24px_80px_rgba(0,0,0,0.5)] rounded-[24px] p-3 sm:p-4 ring-1 ring-white/[0.05]">
           {/* 移动端拖动条 */}
           <div
             ref={handleRef}
@@ -2071,10 +2082,10 @@ export default function InputBar() {
                 syncMentionTagSelection(el)
               }}
               aria-label={promptPlaceholder}
-              className="col-start-1 row-start-1 min-h-[42px] w-full overflow-hidden ios-rounded-scroll-fix whitespace-pre-wrap break-words rounded-2xl border border-gray-200/60 bg-white/50 pl-4 pr-10 py-3 text-sm leading-relaxed shadow-sm outline-none transition-[border-color,box-shadow] duration-200 focus:ring-1 focus:ring-blue-300/40 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-100 dark:focus:ring-blue-500/30"
+              className="col-start-1 row-start-1 min-h-[58px] w-full overflow-hidden ios-rounded-scroll-fix whitespace-pre-wrap break-words rounded-[18px] border border-white/[0.08] bg-black/35 pl-4 pr-10 py-4 text-sm leading-relaxed text-gray-100 shadow-inner outline-none transition-[border-color,box-shadow] duration-200 focus:border-yellow-300/45 focus:ring-1 focus:ring-yellow-300/20"
             />
             {prompt.length === 0 && (
-              <div className={`prompt-placeholder col-start-1 row-start-1 pointer-events-none pl-4 pr-10 py-3 text-sm leading-relaxed text-gray-400 dark:text-gray-500${
+              <div className={`prompt-placeholder col-start-1 row-start-1 pointer-events-none pl-4 pr-10 py-4 text-sm leading-relaxed text-gray-500${
                 isMobile && mobileCollapsed ? ' truncate' : ''
               }`}>
                 {promptPlaceholder}
@@ -2096,9 +2107,24 @@ export default function InputBar() {
 
           {/* 参数 + 按钮 */}
           <div className="mt-3">
+            <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <button
+                type="button"
+                onClick={() => setShowPromptLibrary(true)}
+                className="inline-flex w-fit items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.06] px-3 py-1.5 text-xs font-medium text-gray-200 transition-colors hover:bg-white/[0.1]"
+              >
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5h16M4 12h10M4 19h16" />
+                </svg>
+                提示词库
+              </button>
+              <div className="rounded-full bg-yellow-400/12 px-3 py-1.5 text-[11px] font-medium text-yellow-200 ring-1 ring-yellow-300/20">
+                生成的图片和视频仅临时保存，请及时下载或收藏。
+              </div>
+            </div>
             {/* 桌面端布局 */}
             <div className="hidden sm:flex items-end justify-between gap-3">
-              {renderParams('grid-cols-6')}
+              {renderParams('grid-cols-8')}
 
               <div className="flex gap-2 flex-shrink-0 mb-0.5">
                 <div
@@ -2112,7 +2138,7 @@ export default function InputBar() {
                     className={`p-2.5 rounded-xl transition-all shadow-sm ${
                       atImageLimit
                         ? 'bg-gray-200 dark:bg-white/[0.04] text-gray-300 dark:text-gray-500 cursor-not-allowed'
-                        : 'bg-gray-200 dark:bg-white/[0.06] hover:bg-gray-300 dark:hover:bg-white/[0.1] text-gray-500 dark:text-gray-300 hover:shadow'
+                        : 'bg-white/[0.07] hover:bg-white/[0.12] text-gray-300 hover:text-white hover:shadow'
                     }`}
                     aria-label={uploadImageTooltipText}
                   >
@@ -2135,7 +2161,7 @@ export default function InputBar() {
                         ? 'bg-red-500 text-white hover:bg-red-600'
                         : !hasSubmitApiConfig
                         ? 'bg-gray-300 dark:bg-white/[0.06] text-white cursor-pointer'
-                        : 'bg-blue-500 text-white hover:bg-blue-600 disabled:bg-gray-300 dark:disabled:bg-white/[0.04] disabled:opacity-50 disabled:cursor-not-allowed'
+                        : 'bg-yellow-400 text-black hover:bg-yellow-300 disabled:bg-white/[0.08] disabled:text-gray-500 disabled:opacity-60 disabled:cursor-not-allowed'
                     }`}
                     aria-label={submitButtonAriaLabel}
                   >
@@ -2177,7 +2203,7 @@ export default function InputBar() {
                     className={`p-2.5 rounded-xl transition-all shadow-sm flex-shrink-0 ${
                       atImageLimit
                         ? 'bg-gray-200 dark:bg-white/[0.04] text-gray-300 dark:text-gray-500 cursor-not-allowed'
-                        : 'bg-gray-200 dark:bg-white/[0.06] hover:bg-gray-300 dark:hover:bg-white/[0.1] text-gray-500 dark:text-gray-300'
+                        : 'bg-white/[0.07] hover:bg-white/[0.12] text-gray-300 hover:text-white'
                     }`}
                     aria-label={uploadImageTooltipText}
                   >
@@ -2243,7 +2269,7 @@ export default function InputBar() {
                         ? 'bg-red-500 text-white hover:bg-red-600'
                         : !hasSubmitApiConfig
                         ? 'bg-gray-300 dark:bg-white/[0.06] text-white cursor-pointer'
-                        : 'bg-blue-500 text-white hover:bg-blue-600 disabled:bg-gray-300 dark:disabled:bg-white/[0.04] disabled:opacity-50 disabled:cursor-not-allowed'
+                        : 'bg-yellow-400 text-black hover:bg-yellow-300 disabled:bg-white/[0.08] disabled:text-gray-500 disabled:opacity-60 disabled:cursor-not-allowed'
                     }`}
                   >
                     {activeAgentIsRunning ? (

@@ -33,6 +33,7 @@ body {
   padding: 0;
   -webkit-user-select: none;
   user-select: none;
+  background: #050506;
 }
 
 input,
@@ -398,11 +399,82 @@ input[type="number"] {
   min-height: 3.5rem;
 }
 
+.yy-shell {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 50% 18%, rgba(255, 255, 255, 0.055), transparent 24rem),
+    linear-gradient(180deg, #060607 0%, #050506 44%, #070708 100%);
+}
+
+.yy-shell [data-home-main] {
+  min-height: calc(100vh - 7rem);
+  display: flex;
+  flex-direction: column;
+}
+
+.yy-shell [data-home-main] > .safe-area-x {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.yy-empty-state {
+  flex: 1;
+  min-height: 42vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding-bottom: var(--input-bar-clearance, 17rem);
+}
+
+.yy-shell select,
+.yy-shell input[type="number"],
+.yy-shell input[type="text"] {
+  color: #f4f4f5;
+}
+
+.yy-shell select option {
+  background: #18181b;
+  color: #f4f4f5;
+}
+
+.yy-shell label > span {
+  color: rgba(212, 212, 216, 0.62);
+}
+
+.yy-shell [data-input-bar] label button,
+.yy-shell [data-input-bar] label input,
+.yy-shell [data-input-bar] label select,
+.yy-shell [data-input-bar] label div {
+  border-color: rgba(255, 255, 255, 0.08);
+  background-color: rgba(255, 255, 255, 0.045);
+  color: #f4f4f5;
+}
+
+.yy-shell [data-input-bar] label button:hover,
+.yy-shell [data-input-bar] label select:hover {
+  background-color: rgba(255, 255, 255, 0.075);
+}
+
+.yy-shell [data-input-bar] input::placeholder {
+  color: rgba(161, 161, 170, 0.72);
+}
+
+.yy-shell .task-card-wrapper {
+  color: #18181b;
+}
+
 @media (max-width: 640px) {
   input,
   textarea,
   select {
     font-size: 16px;
+  }
+
+  .yy-empty-state {
+    min-height: 35vh;
+    padding-bottom: var(--input-bar-clearance, 20rem);
   }
 }
 

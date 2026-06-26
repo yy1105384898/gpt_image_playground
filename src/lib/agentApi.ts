@@ -1,5 +1,5 @@
 import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_STREAM_PARTIAL_IMAGES, type ApiProfile, type AppSettings, type ResponsesApiResponse, type ResponsesOutputItem, type TaskParams } from '../types'
-import { buildApiUrl, readClientDevProxyConfig, shouldUseApiProxy } from './devProxy'
+import { buildApiUrl, getProxyRequestHeaders, readClientDevProxyConfig, shouldUseApiProxy, type PlaygroundApiPurpose } from './devProxy'
 import { appendStreamingFormatHint, maybeAppendStreamingHint, getApiErrorMessage, MIME_MAP, normalizeBase64Image, pickActualParams } from './imageApiShared'
 
 export interface AgentApiResultImage {
@@ -98,6 +98,10 @@ function createHeaders(profile: ApiProfile): Record<string, string> {
     Authorization: `Bearer ${profile.apiKey}`,
     'Content-Type': 'application/json',
   }
+}
+
+function withProxyHeaders(headers: Record<string, string>, useApiProxy: boolean, purpose: PlaygroundApiPurpose): Record<string, string> {
+  return useApiProxy ? { ...headers, ...getProxyRequestHeaders(purpose) } : headers
 }
 
 function createImageTool(params: TaskParams, profile: ApiProfile, maskDataUrl?: string): Record<string, unknown> {
@@ -724,7 +728,7 @@ export async function callAgentResponsesApi(opts: {
 
     const response = await fetch(buildApiUrl(profile.baseUrl, 'responses', proxyConfig, useApiProxy), {
       method: 'POST',
-      headers: createHeaders(profile),
+      headers: withProxyHeaders(createHeaders(profile), useApiProxy, 'text'),
       cache: 'no-store',
       body: JSON.stringify(body),
       signal: controller.signal,
@@ -780,7 +784,7 @@ export async function callAgentConversationTitleApi(opts: {
 
     const response = await fetch(buildApiUrl(profile.baseUrl, 'responses', proxyConfig, useApiProxy), {
       method: 'POST',
-      headers: createHeaders(profile),
+      headers: withProxyHeaders(createHeaders(profile), useApiProxy, 'text'),
       cache: 'no-store',
       body: JSON.stringify({
         model: profile.model || settings.model,
@@ -895,7 +899,7 @@ export async function callBatchImageSingle(opts: {
 
     const response = await fetch(buildApiUrl(profile.baseUrl, 'responses', proxyConfig, useApiProxy), {
       method: 'POST',
-      headers: createHeaders(profile),
+      headers: withProxyHeaders(createHeaders(profile), useApiProxy, 'image'),
       cache: 'no-store',
       body: JSON.stringify(body),
       signal: controller.signal,

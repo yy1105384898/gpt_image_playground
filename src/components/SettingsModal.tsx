@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { normalizeBaseUrl } from '../lib/api'
-import { isApiProxyAvailable, isApiProxyLocked, readClientDevProxyConfig } from '../lib/devProxy'
+import { getPlaygroundApiChannelTarget, isApiProxyAvailable, isApiProxyLocked, PLAYGROUND_API_CHANNELS, readClientDevProxyConfig, setPlaygroundApiChannelTarget, type PlaygroundApiPurpose } from '../lib/devProxy'
 import { useStore, exportData, importData, clearData, type SettingsTab } from '../store'
 import {
   createDefaultOpenAIProfile,
@@ -51,6 +51,11 @@ const DEFAULT_COPY_IMPORT_URL_OPTIONS = {
   useNewApiKey: true,
   useNewApiModel: false,
 }
+
+const SIMPLIFIED_TEXT_PROFILE_ID = 'yy-text-profile'
+const SIMPLIFIED_IMAGE_PROFILE_ID = 'yy-image-profile'
+const SIMPLIFIED_VIDEO_PROFILE_ID = 'yy-video-profile'
+const SIMPLIFIED_VIDEO_DEFAULT_MODEL = 'grok-video-1.0'
 
 type CopyImportUrlOptions = typeof DEFAULT_COPY_IMPORT_URL_OPTIONS
 
@@ -331,6 +336,11 @@ export default function SettingsModal() {
   const [duplicateProfileTooltipVisible, setDuplicateProfileTooltipVisible] = useState(false)
   const [llmPromptTooltipVisible, setLlmPromptTooltipVisible] = useState(false)
   const [activeTab, setActiveTab] = useState<SettingsTab>('api')
+  const [apiChannelTargets, setApiChannelTargets] = useState(() => ({
+    text: getPlaygroundApiChannelTarget('text'),
+    image: getPlaygroundApiChannelTarget('image'),
+    video: getPlaygroundApiChannelTarget('video'),
+  }))
   const [exportConfig, setExportConfig] = useState(true)
   const [exportTasks, setExportTasks] = useState(true)
   const [importConfig, setImportConfig] = useState(true)
@@ -360,6 +370,74 @@ export default function SettingsModal() {
   const apiProxyAvailable = isApiProxyAvailable(apiProxyConfig)
   const apiProxyLocked = isApiProxyLocked(apiProxyConfig)
   const defaultConfigOnly = isDefaultConfigOnlyEnabled()
+  const ensureSimplifiedProfiles = useCallback((source: AppSettings): AppSettings => {
+    const normalized = normalizeSettings(source)
+    const previousTextProfile = normalized.profiles.find((profile) => profile.id === SIMPLIFIED_TEXT_PROFILE_ID)
+    const previousImageProfile = normalized.profiles.find((profile) => profile.id === SIMPLIFIED_IMAGE_PROFILE_ID)
+    const previousVideoProfile = normalized.profiles.find((profile) => profile.id === SIMPLIFIED_VIDEO_PROFILE_ID)
+    const active = getActiveApiProfile(normalized)
+    const firstTextProfile = normalized.profiles.find(isAgentTextApiProfile)
+    const firstImageProfile = normalized.profiles.find((profile) => profile.apiMode === 'images') ?? active
+    const textKey = previousTextProfile?.apiKey ?? firstTextProfile?.apiKey ?? active.apiKey
+    const imageKey = previousImageProfile?.apiKey ?? firstImageProfile.apiKey ?? active.apiKey
+    const videoKey = previousVideoProfile?.apiKey ?? imageKey
+    const textChannel = getPlaygroundApiChannelTarget('text')
+    const imageChannel = getPlaygroundApiChannelTarget('image')
+    const videoChannel = getPlaygroundApiChannelTarget('video')
+    const otherProfiles = normalized.profiles.filter((profile) => profile.id !== SIMPLIFIED_TEXT_PROFILE_ID && profile.id !== SIMPLIFIED_IMAGE_PROFILE_ID && profile.id !== SIMPLIFIED_VIDEO_PROFILE_ID)
+    const textProfile = createDefaultOpenAIProfile({
+      ...(previousTextProfile ?? {}),
+      id: SIMPLIFIED_TEXT_PROFILE_ID,
+      name: '文本模型',
+      provider: 'openai',
+      baseUrl: textChannel,
+      apiKey: textKey,
+      model: previousTextProfile?.model || firstTextProfile?.model || DEFAULT_RESPONSES_MODEL,
+      timeout: previousTextProfile?.timeout ?? active.timeout,
+      apiMode: 'responses',
+      apiProxy: true,
+      codexCli: false,
+      streamImages: true,
+    })
+    const imageProfile = createDefaultOpenAIProfile({
+      ...(previousImageProfile ?? {}),
+      id: SIMPLIFIED_IMAGE_PROFILE_ID,
+      name: '生图模型',
+      provider: 'openai',
+      baseUrl: imageChannel,
+      apiKey: imageKey,
+      model: previousImageProfile?.model || firstImageProfile.model || DEFAULT_IMAGES_MODEL,
+      timeout: previousImageProfile?.timeout ?? active.timeout,
+      apiMode: 'images',
+      apiProxy: true,
+      codexCli: false,
+      streamImages: false,
+    })
+
+    const videoProfile = createDefaultOpenAIProfile({
+      ...(previousVideoProfile ?? {}),
+      id: SIMPLIFIED_VIDEO_PROFILE_ID,
+      name: '视频模型',
+      provider: 'openai',
+      baseUrl: videoChannel,
+      apiKey: videoKey,
+      model: previousVideoProfile?.model || SIMPLIFIED_VIDEO_DEFAULT_MODEL,
+      timeout: previousVideoProfile?.timeout ?? active.timeout,
+      apiMode: 'images',
+      apiProxy: true,
+      codexCli: false,
+      streamImages: false,
+    })
+
+    return normalizeSettings({
+      ...normalized,
+      profiles: [textProfile, imageProfile, videoProfile, ...otherProfiles],
+      activeProfileId: SIMPLIFIED_IMAGE_PROFILE_ID,
+      agentApiConfigMode: 'hybrid',
+      agentTextProfileId: SIMPLIFIED_TEXT_PROFILE_ID,
+      agentImageProfileId: SIMPLIFIED_IMAGE_PROFILE_ID,
+    })
+  }, [])
   const activeProfile = draft.profiles.find((profile) => profile.id === draft.activeProfileId) ?? draft.profiles[0] ?? getActiveApiProfile(draft)
   const activeProviderIsOpenAICompatible = isOpenAICompatibleProvider(draft, activeProfile.provider)
   const activeProviderUsesApiUrl = activeProviderIsOpenAICompatible || activeProfile.provider === 'fal'
@@ -368,6 +446,11 @@ export default function SettingsModal() {
   const activeCustomProviderAsync = isAsyncCustomProvider(activeCustomProvider)
   const apiProxyChecked = activeProfileApiProxyEligible && (apiProxyLocked || activeProfile.apiProxy)
   const apiProxyEnabled = apiProxyAvailable && activeProfileApiProxyEligible && apiProxyChecked
+  const simplifiedApiSettings = apiProxyLocked && defaultConfigOnly
+  const simplifiedSettings = simplifiedApiSettings ? ensureSimplifiedProfiles(draft) : draft
+  const simplifiedTextProfile = simplifiedSettings.profiles.find((profile) => profile.id === SIMPLIFIED_TEXT_PROFILE_ID) ?? null
+  const simplifiedImageProfile = simplifiedSettings.profiles.find((profile) => profile.id === SIMPLIFIED_IMAGE_PROFILE_ID) ?? activeProfile
+  const simplifiedVideoProfile = simplifiedSettings.profiles.find((profile) => profile.id === SIMPLIFIED_VIDEO_PROFILE_ID) ?? null
   const defaultProviderOrder = ['openai', 'fal', ...draft.customProviders.map(p => p.id)]
   const providerOrder = draft.providerOrder || defaultProviderOrder
 
@@ -440,7 +523,7 @@ export default function SettingsModal() {
     const displaySettings = normalizedSettings.reuseTaskApiProfileTemporarily && reusedTaskApiProfileId && normalizedSettings.profiles.some((profile) => profile.id === reusedTaskApiProfileId)
       ? normalizeSettings({ ...normalizedSettings, activeProfileId: reusedTaskApiProfileId })
       : normalizedSettings
-    const nextDraft = normalizeSettings({
+    const normalizedNextDraft = normalizeSettings({
       ...displaySettings,
       profiles: displaySettings.profiles.map((profile) => ({
         ...profile,
@@ -449,10 +532,17 @@ export default function SettingsModal() {
           : false,
       })),
     })
+    const nextDraft = simplifiedApiSettings ? ensureSimplifiedProfiles(normalizedNextDraft) : normalizedNextDraft
     setDraft(nextDraft)
+    if (simplifiedApiSettings) setSettings(nextDraft)
     setTimeoutInput(String(getActiveApiProfile(nextDraft).timeout))
     setAgentMaxToolRoundsInput(String(nextDraft.agentMaxToolRounds))
-  }, [apiProxyAvailable, apiProxyLocked, showSettings, settings, reusedTaskApiProfileId])
+    setApiChannelTargets({
+      text: getPlaygroundApiChannelTarget('text'),
+      image: getPlaygroundApiChannelTarget('image'),
+      video: getPlaygroundApiChannelTarget('video'),
+    })
+  }, [apiProxyAvailable, apiProxyLocked, simplifiedApiSettings, ensureSimplifiedProfiles, showSettings, settings, reusedTaskApiProfileId, setSettings])
 
   useEffect(() => {
     setTimeoutInput(String(activeProfile.timeout))
@@ -461,6 +551,10 @@ export default function SettingsModal() {
   useEffect(() => {
     if (showSettings && settingsTabRequest) setActiveTab(settingsTabRequest)
   }, [settingsTabRequest, showSettings])
+
+  useEffect(() => {
+    if (simplifiedApiSettings && activeTab === 'agent') setActiveTab('api')
+  }, [activeTab, simplifiedApiSettings])
 
   const updateProfileMenuMaxHeight = useCallback(() => {
     if (!profileMenuTriggerRef.current) return
@@ -665,6 +759,39 @@ export default function SettingsModal() {
     const nextDraft = getDraftWithActiveProfilePatch(patch)
     setDraft(nextDraft)
     if (commit) commitSettings(nextDraft)
+  }
+
+  const updateSimplifiedProfile = (profileId: string, patch: Partial<ApiProfile>, commit = false) => {
+    const baseDraft = ensureSimplifiedProfiles(draft)
+    const nextDraft = normalizeSettings({
+      ...baseDraft,
+      profiles: baseDraft.profiles.map((profile) => profile.id === profileId ? { ...profile, ...patch } : profile),
+      activeProfileId: SIMPLIFIED_IMAGE_PROFILE_ID,
+      agentApiConfigMode: 'hybrid',
+      agentTextProfileId: SIMPLIFIED_TEXT_PROFILE_ID,
+      agentImageProfileId: SIMPLIFIED_IMAGE_PROFILE_ID,
+    })
+    setDraft(nextDraft)
+    if (commit) commitSettings(nextDraft)
+  }
+
+  const updatePlaygroundApiChannel = (target: string, purpose: PlaygroundApiPurpose) => {
+    setPlaygroundApiChannelTarget(target, purpose)
+    setApiChannelTargets({
+      text: getPlaygroundApiChannelTarget('text'),
+      image: getPlaygroundApiChannelTarget('image'),
+      video: getPlaygroundApiChannelTarget('video'),
+    })
+    const simplifiedProfileId = purpose === 'text'
+      ? SIMPLIFIED_TEXT_PROFILE_ID
+      : purpose === 'video'
+      ? SIMPLIFIED_VIDEO_PROFILE_ID
+      : SIMPLIFIED_IMAGE_PROFILE_ID
+    updateSimplifiedProfile(simplifiedProfileId, {
+      provider: 'openai',
+      baseUrl: target,
+      apiProxy: true,
+    }, true)
   }
 
   const commitActiveProfilePatch = (patch: Partial<ApiProfile>) => {
@@ -1194,7 +1321,7 @@ export default function SettingsModal() {
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
                 </svg>
-                API 配置
+                {simplifiedApiSettings ? '访问令牌' : 'API 配置'}
               </button>
               <button
                 onClick={() => setActiveTab('general')}
@@ -1205,17 +1332,19 @@ export default function SettingsModal() {
                 </svg>
                 习惯配置
               </button>
-              <button
-                onClick={() => setActiveTab('agent')}
-                className={`whitespace-nowrap flex-shrink-0 flex items-center gap-2.5 px-3 py-2.5 text-sm rounded-xl transition-colors ${activeTab === 'agent' ? 'bg-white dark:bg-white/[0.08] shadow-sm text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100/80 dark:hover:bg-white/[0.04]'}`}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8V4H8" />
-                  <rect width="16" height="12" x="4" y="8" rx="2" strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2 14h2M20 14h2M15 13v2M9 13v2" />
-                </svg>
-                Agent 配置
-              </button>
+              {!simplifiedApiSettings && (
+                <button
+                  onClick={() => setActiveTab('agent')}
+                  className={`whitespace-nowrap flex-shrink-0 flex items-center gap-2.5 px-3 py-2.5 text-sm rounded-xl transition-colors ${activeTab === 'agent' ? 'bg-white dark:bg-white/[0.08] shadow-sm text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100/80 dark:hover:bg-white/[0.04]'}`}
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8V4H8" />
+                    <rect width="16" height="12" x="4" y="8" rx="2" strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2 14h2M20 14h2M15 13v2M9 13v2" />
+                  </svg>
+                  Agent 配置
+                </button>
+              )}
               <button
                 onClick={() => setActiveTab('data')}
                 className={`whitespace-nowrap flex-shrink-0 flex items-center gap-2.5 px-3 py-2.5 text-sm rounded-xl transition-colors ${activeTab === 'data' ? 'bg-white dark:bg-white/[0.08] shadow-sm text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100/80 dark:hover:bg-white/[0.04]'}`}
@@ -1266,6 +1395,110 @@ export default function SettingsModal() {
             )}
             
             {activeTab === 'api' && (
+              simplifiedApiSettings ? (
+              <div className="mx-auto flex w-full max-w-2xl flex-col gap-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h4 className="text-base font-bold text-gray-900 dark:text-gray-50">访问令牌</h4>
+                    <p className="mt-1 text-sm leading-relaxed text-gray-500 dark:text-gray-400">
+                      对话读取文本令牌；图片页和 Agent 生图工具读取生图令牌。
+                    </p>
+                  </div>
+                  <span className="shrink-0 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
+                    站点代理
+                  </span>
+                </div>
+
+                {([
+                  {
+                    purpose: 'text' as const,
+                    title: '文本模型',
+                    description: 'Agent 对话、标题生成使用这组通道和令牌。',
+                    profile: simplifiedTextProfile,
+                  },
+                  {
+                    purpose: 'image' as const,
+                    title: '生图模型',
+                    description: '图片页、批量生图、Agent 生图工具使用这组通道和令牌。',
+                    profile: simplifiedImageProfile,
+                  },
+                  {
+                    purpose: 'video' as const,
+                    title: '视频模型',
+                    description: '视频页生成（grok-video 等）使用这组通道和令牌。',
+                    profile: simplifiedVideoProfile,
+                  },
+                ]).map(({ purpose, title, description, profile }) => profile ? (
+                  <div key={purpose} className="rounded-2xl border border-gray-200/70 bg-white/85 p-5 shadow-sm dark:border-white/[0.08] dark:bg-white/[0.03]">
+                    <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <div className="text-sm font-bold text-gray-900 dark:text-gray-50">{title}</div>
+                        <div data-selectable-text className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">{description}</div>
+                      </div>
+                      <span className="w-fit rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-600 dark:bg-white/[0.08] dark:text-gray-300">
+                        {purpose === 'text' ? 'Responses' : purpose === 'video' ? 'Videos' : 'Images'}
+                      </span>
+                    </div>
+
+                    <div className="space-y-4">
+                      <div>
+                        <span className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-200">API 通道</span>
+                        <div className="grid grid-cols-2 gap-2 rounded-xl bg-gray-100/80 p-1 dark:bg-black/20">
+                          {PLAYGROUND_API_CHANNELS.map((channel) => {
+                            const checked = apiChannelTargets[purpose] === channel.target
+                            return (
+                              <button
+                                key={channel.id}
+                                type="button"
+                                onClick={() => updatePlaygroundApiChannel(channel.target, purpose)}
+                                className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${checked ? 'bg-white text-blue-600 shadow-sm dark:bg-white/[0.1] dark:text-blue-300' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100'}`}
+                              >
+                                {channel.label}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+
+                      <label className="block">
+                        <span className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-200">{title}访问令牌</span>
+                        <div className="relative">
+                          <input
+                            value={profile.apiKey}
+                            onChange={(e) => updateSimplifiedProfile(profile.id, { apiKey: e.target.value })}
+                            onBlur={(e) => updateSimplifiedProfile(profile.id, { apiKey: e.target.value }, true)}
+                            type={showApiKey ? 'text' : 'password'}
+                            placeholder="sk-..."
+                            className="w-full rounded-xl border border-gray-200/80 bg-white px-3 py-3 pr-24 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-100 dark:focus:border-blue-400/60"
+                          />
+                          <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => setShowApiKey((v) => !v)}
+                              className="rounded-lg px-2 py-1.5 text-xs font-medium text-gray-500 transition hover:bg-gray-100 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-white/[0.08] dark:hover:text-gray-100"
+                            >
+                              {showApiKey ? '隐藏' : '显示'}
+                            </button>
+                          </div>
+                        </div>
+                      </label>
+                    </div>
+                  </div>
+                ) : null)}
+
+                <button
+                  type="button"
+                  onClick={() => showToast('令牌库稍后接入，可先直接填写访问令牌', 'info')}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200/80 bg-gray-50 px-4 py-2.5 text-sm font-semibold text-gray-700 transition hover:bg-gray-100 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200 dark:hover:bg-white/[0.08]"
+                >
+                  令牌库
+                </button>
+
+                <div data-selectable-text className="text-xs leading-relaxed text-gray-500 dark:text-gray-500">
+                  填写后会自动保存到当前浏览器。本页不会展示或上传明文令牌。
+                </div>
+              </div>
+              ) : (
               <div className="space-y-4">
                 <div>
                   <div className="mb-1.5 flex items-center gap-1.5">
@@ -1726,6 +1959,7 @@ export default function SettingsModal() {
                 </label>
               )}
             </div>
+              )
             )}
             
             {activeTab === 'data' && (
