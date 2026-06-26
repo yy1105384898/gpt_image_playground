@@ -2,15 +2,18 @@
 // store so the (complex) image task pipeline is untouched.
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { VIDEO_MODELS, VIDEO_DURATIONS, VIDEO_ASPECTS, type VideoStatus } from './lib/videoApi'
+import { VIDEO_MODELS, VIDEO_DURATIONS, VIDEO_ASPECTS, type VideoMode, type VideoStatus } from './lib/videoApi'
 
 export interface VideoTask {
   id: string
   localId: string
   prompt: string
   model: string
+  mode: VideoMode
   seconds: number
   aspect: string
+  size: string
+  referenceImageDataUrl?: string
   status: VideoStatus
   videoUrl?: string
   error?: string
@@ -19,8 +22,11 @@ export interface VideoTask {
 
 export interface VideoParams {
   model: string
+  mode: VideoMode
   seconds: number
   aspect: string
+  size: string
+  referenceImageDataUrl?: string
 }
 
 interface VideoState {
@@ -37,8 +43,10 @@ interface VideoState {
 
 const DEFAULT_PARAMS: VideoParams = {
   model: VIDEO_MODELS[0],
+  mode: 'text',
   seconds: VIDEO_DURATIONS[2], // 10s
   aspect: VIDEO_ASPECTS[0].value, // 9:16
+  size: VIDEO_ASPECTS[0].size,
 }
 
 export const useVideoStore = create<VideoState>()(

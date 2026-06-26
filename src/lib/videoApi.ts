@@ -11,6 +11,7 @@
 
 import { useStore } from '../store'
 import { buildApiUrl, getProxyRequestHeaders, readClientDevProxyConfig, shouldUseApiProxy } from './devProxy'
+import { dataUrlToBlob } from './canvasImage'
 import type { ApiProfile } from '../types'
 
 export const VIDEO_MODELS = ['grok-video-1.0', 'grok-video-1.5'] as const
@@ -20,15 +21,20 @@ export const VIDEO_ASPECTS = [
   { value: '16:9', label: '16:9 横屏', size: '1280x720' },
   { value: '1:1', label: '1:1 方形', size: '720x720' },
 ] as const
+export const VIDEO_SIZES = ['自动', '720x1280', '1280x720', '720x720', '1080x1920', '1920x1080', '1024x1024'] as const
 
 export type VideoModel = (typeof VIDEO_MODELS)[number]
 export type VideoStatus = 'queued' | 'processing' | 'completed' | 'failed'
+export type VideoMode = 'text' | 'image' | 'image_text'
 
 export interface VideoGenParams {
   model: string
+  mode: VideoMode
   prompt: string
   seconds: number
   aspect: string
+  size: string
+  referenceImageDataUrl?: string
 }
 
 const POLL_INTERVAL_MS = 5000
@@ -54,14 +60,65 @@ function resolveSize(aspect: string): string {
   return VIDEO_ASPECTS.find((a) => a.value === aspect)?.size ?? '720x1280'
 }
 
-// Read a status string from either `status` or `data.status`.
+function resolveRequestSize(params: Pick<VideoGenParams, 'aspect' | 'size'>): string {
+  return params.size && params.size !== '自动' ? params.size : resolveSize(params.aspect)
+}
+
+function readPathString(payload: unknown, paths: string[]): string {
+  for (const path of paths) {
+    let current: unknown = payload
+    for (const part of path.split('.')) {
+      if (!current || typeof current !== 'object') {
+        current = undefined
+        break
+      }
+      current = (current as Record<string, unknown>)[part]
+    }
+    if (typeof current === 'string' && current.trim()) return current.trim()
+  }
+  return ''
+}
+
+function walkStrings(payload: unknown, visit: (value: string, key: string) => string | null, key = ''): string | null {
+  if (typeof payload === 'string') return visit(payload, key)
+  if (!payload || typeof payload !== 'object') return null
+  if (Array.isArray(payload)) {
+    for (const item of payload) {
+      const found = walkStrings(item, visit, key)
+      if (found) return found
+    }
+    return null
+  }
+  for (const [childKey, value] of Object.entries(payload as Record<string, unknown>)) {
+    const found = walkStrings(value, visit, childKey)
+    if (found) return found
+  }
+  return null
+}
+
+// Read a status string from common NewAPI/grok2api response shapes.
 function readStatus(payload: unknown): string {
   const obj = payload as Record<string, unknown> | null
   if (!obj || typeof obj !== 'object') return ''
-  if (typeof obj.status === 'string') return obj.status.toLowerCase()
-  const data = obj.data as Record<string, unknown> | undefined
-  if (data && typeof data.status === 'string') return data.status.toLowerCase()
-  return ''
+  const direct = readPathString(payload, [
+    'status',
+    'state',
+    'task_status',
+    'taskStatus',
+    'data.status',
+    'data.state',
+    'data.task_status',
+    'data.taskStatus',
+    'result.status',
+    'result.state',
+    'output.status',
+    'output.state',
+  ])
+  if (direct) return direct.toLowerCase()
+  return walkStrings(payload, (value, key) => {
+    if (!/status|state/i.test(key)) return null
+    return value.toLowerCase()
+  }) ?? ''
 }
 
 // Try to pull a directly-playable video URL out of a completed response.
@@ -71,21 +128,34 @@ function readVideoUrl(payload: unknown): string | null {
   const candidates = [
     obj.url,
     obj.video_url,
+    obj.videoUrl,
     obj.output,
+    obj.content_url,
     (obj.data as Record<string, unknown> | undefined)?.url,
-    ((obj.data as Record<string, unknown> | undefined)?.video_url),
+    (obj.data as Record<string, unknown> | undefined)?.video_url,
+    (obj.data as Record<string, unknown> | undefined)?.videoUrl,
+    (obj.data as Record<string, unknown> | undefined)?.output,
+    ((obj.data as Record<string, unknown> | undefined)?.result as Record<string, unknown> | undefined)?.url,
+    ((obj.data as Record<string, unknown> | undefined)?.result as Record<string, unknown> | undefined)?.video_url,
+    ((obj.data as Record<string, unknown> | undefined)?.result as Record<string, unknown> | undefined)?.videoUrl,
+    ((obj.data as Record<string, unknown> | undefined)?.output as Record<string, unknown> | undefined)?.url,
+    ((obj.data as Record<string, unknown> | undefined)?.output as Record<string, unknown> | undefined)?.video_url,
     Array.isArray(obj.urls) ? obj.urls[0] : undefined,
   ]
   for (const c of candidates) {
     if (typeof c === 'string' && /^https?:\/\//.test(c)) return c
   }
-  return null
+  return walkStrings(payload, (value, key) => {
+    if (!/^https?:\/\//.test(value)) return null
+    if (/video|url|output|content/i.test(key) || /\.(mp4|webm|mov)(\?|$)/i.test(value)) return value
+    return null
+  })
 }
 
 function normalizeStatus(raw: string): VideoStatus {
-  if (['completed', 'succeeded', 'success', 'done'].includes(raw)) return 'completed'
-  if (['failed', 'error', 'cancelled', 'canceled'].includes(raw)) return 'failed'
-  if (['queued', 'pending', 'created'].includes(raw)) return 'queued'
+  if (['completed', 'complete', 'succeeded', 'success', 'successful', 'done', 'finished', 'finish'].includes(raw)) return 'completed'
+  if (['failed', 'fail', 'error', 'cancelled', 'canceled', 'rejected', 'timeout'].includes(raw)) return 'failed'
+  if (['queued', 'queueing', 'pending', 'created', 'submitted', 'waiting', 'wait'].includes(raw)) return 'queued'
   return 'processing'
 }
 
@@ -102,9 +172,19 @@ export async function createVideo(params: VideoGenParams, signal?: AbortSignal):
   form.append('model', params.model)
   form.append('prompt', params.prompt)
   form.append('seconds', String(params.seconds))
-  form.append('size', resolveSize(params.aspect))
+  form.append('duration', String(params.seconds))
+  form.append('mode', params.mode)
+  form.append('size', resolveRequestSize(params))
+  form.append('aspect_ratio', params.aspect)
   form.append('resolution', '720p')
   form.append('preset', 'normal')
+  if (params.referenceImageDataUrl && params.mode !== 'text') {
+    const blob = await dataUrlToBlob(params.referenceImageDataUrl, 'image/png')
+    const file = new File([blob], 'reference.png', { type: blob.type || 'image/png' })
+    form.append('image', file)
+    form.append('image[]', file)
+    form.append('input_image', file)
+  }
 
   const url = buildApiUrl(profile.baseUrl, 'videos', proxyConfig, useApiProxy)
   const resp = await fetch(url, {
@@ -116,9 +196,20 @@ export async function createVideo(params: VideoGenParams, signal?: AbortSignal):
   })
   if (!resp.ok) throw new Error(await readError(resp))
   const json = await resp.json()
-  const id = typeof json.id === 'string' ? json.id.trim() : ''
-  if (!id) throw new Error('视频接口未返回 video_id，请确认服务商支持 /v1/videos')
-  return { id }
+  const id = [
+    json.id,
+    json.video_id,
+    json.videoId,
+    json.task_id,
+    json.taskId,
+    json.data?.id,
+    json.data?.video_id,
+    json.data?.videoId,
+    json.data?.task_id,
+    json.data?.taskId,
+  ].find((value) => typeof value === 'string' && value.trim()) as string | undefined
+  if (!id?.trim()) throw new Error('视频接口未返回 video_id，请确认服务商支持 /v1/videos')
+  return { id: id.trim() }
 }
 
 async function fetchStatusOnce(id: string, signal?: AbortSignal): Promise<unknown> {
@@ -162,11 +253,13 @@ export interface PollVideoCallbacks {
 export async function pollVideo(id: string, cb: PollVideoCallbacks = {}): Promise<string> {
   const started = Date.now()
   let lastStatus: VideoStatus | null = null
+  let attempts = 0
   while (true) {
     if (cb.signal?.aborted) throw new DOMException('aborted', 'AbortError')
     if (Date.now() - started > POLL_TIMEOUT_MS) throw new Error('视频生成超时')
 
     const payload = await fetchStatusOnce(id, cb.signal)
+    attempts += 1
     const status = normalizeStatus(readStatus(payload))
     if (status !== lastStatus) {
       lastStatus = status
@@ -177,6 +270,13 @@ export async function pollVideo(id: string, cb: PollVideoCallbacks = {}): Promis
       const direct = readVideoUrl(payload)
       if (direct) return direct
       return fetchContentObjectUrl(id, cb.signal)
+    }
+    if (attempts >= 3) {
+      try {
+        return await fetchContentObjectUrl(id, cb.signal)
+      } catch {
+        // The content endpoint often returns 404/409 before completion; keep polling.
+      }
     }
     await delay(POLL_INTERVAL_MS, cb.signal)
   }

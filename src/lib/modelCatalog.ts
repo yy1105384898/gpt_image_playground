@@ -71,12 +71,7 @@ export function isModelForPurpose(id: string, purpose: PlaygroundApiPurpose): bo
 }
 
 export function getDefaultSelectedModels(models: string[], purpose: PlaygroundApiPurpose): string[] {
-  return models.filter((model) => {
-    const lower = model.toLowerCase()
-    if (purpose === 'image') return lower.includes('image')
-    if (purpose === 'video') return lower.includes('video')
-    return !lower.includes('image') && !lower.includes('video')
-  })
+  return models.filter((model) => isModelForPurpose(model, purpose))
 }
 
 function authHeader(apiKey: string): string {
@@ -94,6 +89,36 @@ function profileForPurpose(purpose: PlaygroundApiPurpose) {
 
 async function fetchChannelModels(target: string, purpose: PlaygroundApiPurpose): Promise<string[]> {
   const profile = profileForPurpose(purpose)
+  const auth = authHeader(profile?.apiKey ?? '')
+  if (typeof window !== 'undefined' && window.location.pathname.replace(/\/+/g, '/').startsWith('/playground/')) {
+    try {
+      const resp = await fetch('/api/playground/models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        cache: 'no-store',
+        body: JSON.stringify({
+          connection_mode: 'custom',
+          model_kind: purpose,
+          api_url: target,
+          api_key: auth.replace(/^Bearer\s+/i, ''),
+        }),
+      })
+      if (resp.ok) {
+        const json = await resp.json()
+        const keyed = purpose === 'image'
+          ? json?.image_models
+          : purpose === 'text'
+            ? json?.text_models
+            : json?.video_models
+        const list = Array.isArray(keyed) && keyed.length ? keyed : json?.models
+        if (Array.isArray(list)) {
+          return Array.from(new Set(list.filter((item): item is string => typeof item === 'string' && item.trim().length > 0).map((item) => item.trim())))
+        }
+      }
+    } catch {
+      // Fall back to the OpenAI-compatible /models endpoint below.
+    }
+  }
   const proxyConfig = readClientDevProxyConfig()
   const useApiProxy = shouldUseApiProxy(profile?.apiProxy ?? true, proxyConfig)
   const url = buildApiUrl(target, 'models', proxyConfig, useApiProxy)
@@ -101,7 +126,6 @@ async function fetchChannelModels(target: string, purpose: PlaygroundApiPurpose)
     'X-YY-API-Target': target,
     'X-YY-API-Purpose': purpose,
   }
-  const auth = authHeader(profile?.apiKey ?? '')
   if (auth) headers.Authorization = auth
   const resp = await fetch(url, { method: 'GET', headers, cache: 'no-store' })
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
