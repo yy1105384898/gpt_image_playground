@@ -1185,59 +1185,16 @@ export const useStore = create<AppState>()(
         }
 
         const state = get()
-        const settings = normalizeSettings(state.settings)
-        const activeProfile = getActiveApiProfile(settings)
-        const agentValidationError = getAgentProfileValidationError(settings)
-
-        if (!agentValidationError) {
-          const galleryInputDraft = saveGalleryInputDraft(state)
-          set((state) => ({
-            appMode: 'agent',
-            galleryInputDraft,
-            agentMobileHeaderVisible: false,
-            agentSidebarCollapsed: true,
-            agentAssetPanelCollapsed: true,
-            selectedTaskIds: [],
-            selectedFavoriteCollectionIds: [],
-            ...restoreAgentInputDraftState(state.agentInputDrafts, state.activeAgentConversationId),
-          }))
-          return
-        }
-
-        if (settings.agentApiConfigMode === 'off' && activeProfile.provider === 'openai' && activeProfile.apiMode !== 'responses') {
-          state.setConfirmDialog({
-            title: '需要 Responses API 配置',
-            message: `当前配置「${activeProfile.name}」使用的是 Images API，仅支持生成图片，无 Agent 模式需要的对话能力。\n\n请前往 API 配置页，将当前配置调整为 Responses API，或切换/新建一个支持 Responses API 的配置。`,
-            confirmText: '去设置',
-            cancelText: '取消',
-            action: () => {
-              useStore.getState().setShowSettings(true, 'api')
-            },
-          })
-          return
-        }
-
-        if (settings.agentApiConfigMode !== 'off') {
-          state.setConfirmDialog({
-            title: 'Agent API 配置不完整',
-            message: `${agentValidationError.message}\n\n请前往 Agent 配置页，选择或新建可用配置。`,
-            confirmText: '去设置',
-            cancelText: '取消',
-            action: () => {
-              useStore.getState().setShowSettings(true, 'agent')
-            },
-          })
-          return
-        }
-
-        state.setConfirmDialog({
-          title: '配置不支持 Agent 模式',
-          message: `当前配置「${activeProfile.name}」所属的服务商暂不支持 Agent 模式。Agent 模式需要使用支持 Responses API 的 OpenAI 配置。\n\n请前往 API 配置页，切换或新建一个支持 Responses API 的配置。`,
-          confirmText: '去设置',
-          cancelText: '取消',
-          action: () => {
-            useStore.getState().setShowSettings(true, 'api')
-          },
+        const agentInputDrafts = saveActiveAgentInputDrafts(state)
+        const galleryInputDraft = saveGalleryInputDraft(state)
+        set({
+          appMode: 'agent',
+          agentInputDrafts,
+          galleryInputDraft,
+          agentMobileHeaderVisible: true,
+          selectedTaskIds: [],
+          selectedFavoriteCollectionIds: [],
+          agentEditingRoundId: null,
         })
       },
 

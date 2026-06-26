@@ -5,9 +5,8 @@ import { useTooltip } from '../hooks/useTooltip'
 import { dismissAllTooltips } from '../lib/tooltipDismiss'
 import ViewportTooltip from './ViewportTooltip'
 import HelpModal from './HelpModal'
-import HistoryModal from './HistoryModal'
 import { useFavoriteCollectionTitle } from './FavoriteCollections'
-import { EditIcon, HelpCircleIcon, HistoryIcon, InstallIcon, SettingsIcon } from './icons'
+import { HelpCircleIcon, InstallIcon, SettingsIcon } from './icons'
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>
@@ -24,23 +23,15 @@ export default function Header() {
   const setAppMode = useStore((s) => s.setAppMode)
   const setShowSettings = useStore((s) => s.setShowSettings)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
-  const agentMobileHeaderVisible = useStore((s) => s.agentMobileHeaderVisible)
-  const agentConversations = useStore((s) => s.agentConversations)
-  const activeAgentConversationId = useStore((s) => s.activeAgentConversationId)
   const filterFavorite = useStore((s) => s.filterFavorite)
   const activeFavoriteCollectionId = useStore((s) => s.activeFavoriteCollectionId)
-  const activeConversation = agentConversations.find((item) => item.id === activeAgentConversationId)
   const favoriteCollectionTitle = useFavoriteCollectionTitle()
   const showFavoriteCollectionTitle = appMode === 'gallery' && Boolean(activeFavoriteCollectionId)
   const { hasUpdate, latestRelease, dismiss } = useVersionCheck()
   const [showHelp, setShowHelp] = useState(false)
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null)
   const [isPwaInstalled, setIsPwaInstalled] = useState(isInstalledPwa)
-  const [hintVisible, setHintVisible] = useState(false)
   const [scrollDirection, setScrollDirection] = useState<'up' | 'down'>('up')
-  const [showHistoryModal, setShowHistoryModal] = useState(false)
-  const historyButtonRef = useRef<HTMLButtonElement>(null)
-  const createConversation = useStore((s) => s.createAgentConversation)
 
   useEffect(() => {
     if (appMode === 'agent') {
@@ -72,16 +63,6 @@ export default function Header() {
     window.addEventListener('scroll', handleScroll, { passive: true })
     return () => window.removeEventListener('scroll', handleScroll)
   }, [appMode])
-
-  useEffect(() => {
-    if (appMode === 'agent' && !agentMobileHeaderVisible) {
-      setHintVisible(true)
-      const timer = setTimeout(() => {
-        setHintVisible(false)
-      }, 1500)
-      return () => clearTimeout(timer)
-    }
-  }, [appMode, agentMobileHeaderVisible])
 
   const installTooltip = useTooltip()
   const helpTooltip = useTooltip()
@@ -146,7 +127,7 @@ export default function Header() {
 
   return (
     <>
-      <header data-no-drag-select className={`safe-area-top fixed top-0 left-0 right-0 z-40 bg-[#050506]/88 backdrop-blur-xl border-b border-white/[0.07] transition-transform duration-300 ease-in-out ${appMode === 'agent' && !agentMobileHeaderVisible ? '-translate-y-full sm:translate-y-0' : 'translate-y-0'}`}>
+      <header data-no-drag-select className="safe-area-top fixed top-0 left-0 right-0 z-40 translate-y-0 bg-[#050506]/88 backdrop-blur-xl border-b border-white/[0.07] transition-transform duration-300 ease-in-out">
         <div className="safe-area-x safe-header-inner max-w-7xl mx-auto grid grid-cols-[1fr_auto_1fr] items-center relative">
           <div className="flex-1 min-w-0 pr-2 flex items-center gap-2">
             <h1 className="inline-flex min-w-0 items-start relative mr-2">
@@ -177,49 +158,7 @@ export default function Header() {
                 </a>
               )}
             </h1>
-            {appMode === 'agent' && <div className="hidden sm:flex items-center gap-1 relative">
-              <button
-                ref={historyButtonRef}
-                type="button"
-                onClick={() => setShowHistoryModal((visible) => !visible)}
-                className="p-1.5 text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/[0.04] rounded-lg transition-colors"
-                title="历史任务"
-              >
-                <HistoryIcon className="w-5 h-5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setAppMode('agent')
-                  createConversation()
-                }}
-                className="p-1.5 text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/[0.04] rounded-lg transition-colors"
-                title="新对话"
-              >
-                <EditIcon className="w-5 h-5" />
-              </button>
-              {showHistoryModal && (
-                <HistoryModal onClose={() => setShowHistoryModal(false)} ignoreOutsideClickRef={historyButtonRef} />
-              )}
-            </div>}
           </div>
-          {appMode === 'agent' && activeConversation && (
-            <div className="absolute left-1/2 top-1/2 hidden max-w-[30%] -translate-x-1/2 -translate-y-1/2 sm:flex">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowHistoryModal(true)
-                  // Use setTimeout to ensure HistoryModal is mounted before setting editing id
-                  setTimeout(() => {
-                    useStore.getState().setAgentEditingConversationId(activeConversation.id)
-                  }, 0)
-                }}
-                className="text-sm font-semibold text-gray-700 dark:text-gray-300 truncate hover:bg-gray-100 dark:hover:bg-white/[0.04] px-2 py-1 rounded transition-colors"
-              >
-                {activeConversation.title || 'Agent'}
-              </button>
-            </div>
-          )}
           {showFavoriteCollectionTitle && (
             <div className="absolute left-1/2 top-1/2 hidden max-w-[30%] -translate-x-1/2 -translate-y-1/2 sm:flex">
               <div className="truncate rounded px-2 py-1 text-sm font-semibold text-gray-700 dark:text-gray-300" title={favoriteCollectionTitle}>
@@ -333,14 +272,7 @@ export default function Header() {
         </div>
       </header>
       
-      {/* Hint for sliding down */}
-      <div className={`fixed top-0 left-0 right-0 z-30 flex justify-center pointer-events-none transition-all duration-300 ease-in-out sm:hidden ${appMode === 'agent' && hintVisible && !agentMobileHeaderVisible ? 'translate-y-[env(safe-area-inset-top,0px)] opacity-100' : '-translate-y-full opacity-0'}`}>
-        <div className="bg-black/60 backdrop-blur-sm text-white text-xs px-3 py-1.5 rounded-b-xl shadow-lg">
-          下拉展示顶栏
-        </div>
-      </div>
-
-      <div className={`safe-area-top invisible pointer-events-none transition-all duration-300 ease-in-out ${appMode === 'agent' && !agentMobileHeaderVisible ? 'max-h-0 sm:max-h-[500px] opacity-0 sm:opacity-100 overflow-hidden sm:overflow-visible' : 'max-h-[500px] opacity-100'}`} aria-hidden="true">
+      <div className="safe-area-top invisible pointer-events-none max-h-[500px] opacity-100 transition-all duration-300 ease-in-out" aria-hidden="true">
         <div className="safe-header-inner" />
         <div className={`safe-area-x sm:hidden overflow-hidden transition-all duration-300 ease-in-out ${appMode === 'gallery' && scrollDirection === 'down' ? 'max-h-0 pb-0' : 'max-h-20 pb-2'}`}>
           <div className="p-1">

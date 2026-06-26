@@ -9,7 +9,7 @@ import type { AppSettings } from './types'
 import Header from './components/Header'
 import SearchBar from './components/SearchBar'
 import TaskGrid from './components/TaskGrid'
-import AgentWorkspace from './components/AgentWorkspace'
+import ChatWorkspace from './components/ChatWorkspace'
 import VideoWorkspace from './components/VideoWorkspace'
 import InputBar from './components/InputBar'
 import DetailModal from './components/DetailModal'
@@ -113,7 +113,7 @@ export default function App() {
     <div className="yy-shell min-h-screen text-gray-100">
       <Header />
       {appMode === 'agent' ? (
-        <AgentWorkspace />
+        <ChatWorkspace />
       ) : appMode === 'video' ? (
         <VideoWorkspace />
       ) : (
@@ -124,7 +124,7 @@ export default function App() {
           </div>
         </main>
       )}
-      {appMode !== 'video' && <InputBar />}
+      {appMode === 'gallery' && <InputBar />}
       <DetailModal />
       <Lightbox />
       <SettingsModal />

@@ -27,6 +27,7 @@ import {
 } from '../lib/apiProfiles'
 import { copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import { requestBrowserNotificationPermission, type BrowserNotificationPermissionResult } from '../lib/browserNotification'
+import { deleteTokenVaultItem, getTokenVaultChannelLabel, getTokenVaultItems, maskToken, saveTokenVaultItem } from '../lib/tokenVault'
 import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_STREAM_PARTIAL_IMAGES, type AgentApiConfigMode, type ApiProfile, type AppSettings, type CustomProviderDefinition, type ZipDownloadRoute } from '../types'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
@@ -325,6 +326,9 @@ export default function SettingsModal() {
   const [timeoutInput, setTimeoutInput] = useState(String(getActiveApiProfile(settings).timeout))
   const [agentMaxToolRoundsInput, setAgentMaxToolRoundsInput] = useState(String(settings.agentMaxToolRounds))
   const [showApiKey, setShowApiKey] = useState(false)
+  const [showTokenVault, setShowTokenVault] = useState(false)
+  const [, setTokenVaultVersion] = useState(0)
+  const [tokenVaultNames, setTokenVaultNames] = useState<Record<string, string>>({})
   const [showProfileMenu, setShowProfileMenu] = useState(false)
   const [profileMenuMaxHeight, setProfileMenuMaxHeight] = useState(DEFAULT_DROPDOWN_MAX_HEIGHT)
   const [showCustomProviderImport, setShowCustomProviderImport] = useState(false)
@@ -794,6 +798,36 @@ export default function SettingsModal() {
     }, true)
   }
 
+  const refreshTokenVault = () => setTokenVaultVersion((version) => version + 1)
+
+  const getTokenVaultName = (purpose: PlaygroundApiPurpose) => {
+    const profile = purpose === 'text' ? simplifiedTextProfile : purpose === 'video' ? simplifiedVideoProfile : simplifiedImageProfile
+    return tokenVaultNames[purpose] ?? `${getTokenVaultChannelLabel(apiChannelTargets[purpose])}${profile?.apiKey?.trim() ? ' 当前令牌' : ' 令牌'}`
+  }
+
+  const saveCurrentTokenToVault = (purpose: PlaygroundApiPurpose, profile: ApiProfile) => {
+    const token = profile.apiKey.trim()
+    if (!token) {
+      showToast('先填写令牌再保存到令牌库', 'info')
+      return
+    }
+    saveTokenVaultItem(apiChannelTargets[purpose], getTokenVaultName(purpose), token)
+    setTokenVaultNames((names) => ({ ...names, [purpose]: '' }))
+    refreshTokenVault()
+    showToast('已保存到当前通道令牌库', 'success')
+  }
+
+  const applyTokenFromVault = (purpose: PlaygroundApiPurpose, profile: ApiProfile, token: string) => {
+    updateSimplifiedProfile(profile.id, { apiKey: token }, true)
+    showToast('已填入令牌', 'success')
+  }
+
+  const removeTokenFromVault = (target: string, id: string) => {
+    deleteTokenVaultItem(target, id)
+    refreshTokenVault()
+    showToast('已删除令牌', 'success')
+  }
+
   const commitActiveProfilePatch = (patch: Partial<ApiProfile>) => {
     const nextDraft = getDraftWithActiveProfilePatch(patch)
     commitSettings(nextDraft)
@@ -871,7 +905,7 @@ export default function SettingsModal() {
   }
 
   useCloseOnEscape(showSettings, handleClose)
-  usePreventBackgroundScroll(showSettings, showZipDownloadRouteManager ? zipDownloadRouteScrollBoundaryRef : showCustomProviderImport ? customProviderScrollBoundaryRef : settingsScrollBoundaryRef)
+  usePreventBackgroundScroll(showSettings || showTokenVault, showZipDownloadRouteManager ? zipDownloadRouteScrollBoundaryRef : showCustomProviderImport ? customProviderScrollBoundaryRef : settingsScrollBoundaryRef)
 
   if (!showSettings) return null
 
@@ -1482,13 +1516,62 @@ export default function SettingsModal() {
                           </div>
                         </div>
                       </label>
+
+                      <div className="rounded-xl border border-gray-200/70 bg-gray-50/80 p-3 dark:border-white/[0.08] dark:bg-black/20">
+                        <div className="mb-2 flex items-center justify-between gap-2">
+                          <span className="text-xs font-semibold text-gray-600 dark:text-gray-300">
+                            {getTokenVaultChannelLabel(apiChannelTargets[purpose])} 令牌库
+                          </span>
+                          <span className="text-[11px] text-gray-400">
+                            {getTokenVaultItems(apiChannelTargets[purpose]).length} 个
+                          </span>
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                          <input
+                            value={tokenVaultNames[purpose] ?? ''}
+                            onChange={(e) => setTokenVaultNames((names) => ({ ...names, [purpose]: e.target.value }))}
+                            placeholder="命名当前令牌"
+                            className="min-w-0 rounded-lg border border-gray-200/80 bg-white px-3 py-2 text-xs text-gray-700 outline-none transition placeholder:text-gray-400 focus:border-blue-400 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-100"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => saveCurrentTokenToVault(purpose, profile)}
+                            className="rounded-lg bg-gray-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-black dark:bg-white dark:text-black dark:hover:bg-gray-200"
+                          >
+                            保存当前
+                          </button>
+                        </div>
+                        <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_auto]">
+                          <Select
+                            value=""
+                            onChange={(token) => {
+                              if (typeof token === 'string' && token) applyTokenFromVault(purpose, profile, token)
+                            }}
+                            options={[
+                              { label: '选择已保存令牌', value: '' },
+                              ...getTokenVaultItems(apiChannelTargets[purpose]).map((item) => ({
+                                label: `${item.name} · ${maskToken(item.token)}`,
+                                value: item.token,
+                              })),
+                            ]}
+                            className="rounded-lg border border-gray-200/80 bg-white px-3 py-2 text-xs text-gray-700 outline-none transition focus:border-blue-400 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-100"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowTokenVault(true)}
+                            className="rounded-lg border border-gray-200/80 bg-white px-3 py-2 text-xs font-semibold text-gray-600 transition hover:bg-gray-100 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200 dark:hover:bg-white/[0.08]"
+                          >
+                            管理
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 ) : null)}
 
                 <button
                   type="button"
-                  onClick={() => showToast('令牌库稍后接入，可先直接填写访问令牌', 'info')}
+                  onClick={() => setShowTokenVault(true)}
                   className="flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200/80 bg-gray-50 px-4 py-2.5 text-sm font-semibold text-gray-700 transition hover:bg-gray-100 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200 dark:hover:bg-white/[0.08]"
                 >
                   令牌库
@@ -2157,6 +2240,81 @@ export default function SettingsModal() {
         </div>
       </div>
       </div>
+
+        {showTokenVault && createPortal(
+          <div
+            data-no-drag-select
+            className="fixed inset-0 z-[120] flex items-center justify-center p-4"
+            onClick={() => setShowTokenVault(false)}
+          >
+            <div className="absolute inset-0 bg-black/30 backdrop-blur-md animate-overlay-in" />
+            <div
+              className="relative z-10 flex max-h-[85vh] w-full max-w-2xl flex-col rounded-3xl border border-white/50 bg-white/95 shadow-[0_8px_40px_rgb(0,0,0,0.18)] ring-1 ring-black/5 animate-confirm-in dark:border-white/[0.08] dark:bg-gray-900/95 dark:ring-white/10"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex shrink-0 items-start justify-between gap-4 p-6 pb-3">
+                <div>
+                  <h3 className="text-base font-bold text-gray-900 dark:text-gray-50">令牌库</h3>
+                  <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                    令牌按 NewAPI / SubAPI 分开保存在当前浏览器，不上传到服务端。
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowTokenVault(false)}
+                  className="rounded-full p-1.5 text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-white/[0.08] dark:hover:text-gray-100"
+                  aria-label="关闭"
+                >
+                  <CloseIcon className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 pb-6 custom-scrollbar">
+                {PLAYGROUND_API_CHANNELS.map((channel) => {
+                  const items = getTokenVaultItems(channel.target)
+                  return (
+                    <section key={channel.id} className="rounded-2xl border border-gray-200/70 bg-gray-50/80 p-4 dark:border-white/[0.08] dark:bg-white/[0.03]">
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-bold text-gray-800 dark:text-gray-100">{channel.label}</div>
+                          <div className="mt-0.5 text-xs text-gray-500 dark:text-gray-500">{channel.target}</div>
+                        </div>
+                        <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-gray-500 dark:bg-white/[0.08] dark:text-gray-300">
+                          {items.length} 个
+                        </span>
+                      </div>
+                      {items.length ? (
+                        <div className="space-y-2">
+                          {items.map((item) => (
+                            <div key={item.id} className="flex items-center justify-between gap-3 rounded-xl border border-gray-200/70 bg-white px-3 py-2.5 dark:border-white/[0.08] dark:bg-black/20">
+                              <div className="min-w-0">
+                                <div className="truncate text-sm font-semibold text-gray-800 dark:text-gray-100">{item.name}</div>
+                                <div className="mt-0.5 font-mono text-xs text-gray-400">{maskToken(item.token)}</div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => removeTokenFromVault(channel.target, item.id)}
+                                className="shrink-0 rounded-lg p-2 text-gray-400 transition hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-500/10 dark:hover:text-red-300"
+                                aria-label="删除令牌"
+                              >
+                                <TrashIcon className="h-4 w-4" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="rounded-xl border border-dashed border-gray-200 px-3 py-4 text-center text-sm text-gray-400 dark:border-white/[0.08]">
+                          暂无保存令牌
+                        </div>
+                      )}
+                    </section>
+                  )
+                })}
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
 
         {showZipDownloadRouteManager && createPortal(
           <div

@@ -2,7 +2,7 @@ import { useEffect, useRef, type ReactNode } from 'react'
 import { ALL_FAVORITES_COLLECTION_ID, clearFailedTasks, getTaskFavoriteCollectionIds, useStore, taskMatchesFilterStatus, taskMatchesSearchQuery } from '../store'
 import { useTooltip } from '../hooks/useTooltip'
 import Select from './Select'
-import { ChevronLeftIcon, CollectionManageIcon, FavoriteIcon, TrashIcon } from './icons'
+import { ChevronLeftIcon, CollectionManageIcon, FavoriteIcon, PlusIcon, TrashIcon } from './icons'
 import ViewportTooltip from './ViewportTooltip'
 
 function SearchActionButton({
@@ -46,7 +46,6 @@ export default function SearchBar() {
   const rootRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const searchQuery = useStore((s) => s.searchQuery)
-  const tasks = useStore((s) => s.tasks)
   const setSearchQuery = useStore((s) => s.setSearchQuery)
   const filterStatus = useStore((s) => s.filterStatus)
   const setFilterStatus = useStore((s) => s.setFilterStatus)
@@ -56,6 +55,7 @@ export default function SearchBar() {
   const activeFavoriteCollectionId = useStore((s) => s.activeFavoriteCollectionId)
   const setActiveFavoriteCollectionId = useStore((s) => s.setActiveFavoriteCollectionId)
   const openManageCollectionsModal = useStore((s) => s.openManageCollectionsModal)
+  const setShowPromptLibrary = useStore((s) => s.setShowPromptLibrary)
   const failedCount = useStore((s) => {
     const q = s.searchQuery.trim().toLowerCase()
     return s.tasks.filter((task) => {
@@ -129,36 +129,41 @@ export default function SearchBar() {
     clearSelection()
   }
 
-  if (!tasks.length && !searchQuery && !filterFavorite && filterStatus === 'all') {
-    return null
-  }
-
   return (
-    <div ref={rootRef} data-no-drag-select className="mt-6 mb-4 flex gap-3">
-      <div className="flex gap-2 flex-shrink-0 z-20">
+    <div ref={rootRef} data-no-drag-select className="mb-4 mt-5 rounded-2xl border border-white/[0.08] bg-white/[0.04] p-2 shadow-[0_16px_50px_rgba(0,0,0,0.18)] backdrop-blur-xl">
+      <div className="flex flex-col gap-2 md:flex-row md:items-center">
+        <button
+          type="button"
+          onClick={() => setShowPromptLibrary(true)}
+          className="inline-flex h-[42px] shrink-0 items-center justify-center gap-2 rounded-xl bg-white px-4 text-sm font-semibold text-black transition hover:bg-gray-200"
+        >
+          <PlusIcon className="h-4 w-4" />
+          提示词库
+        </button>
         <SearchActionButton
           tooltip={favoriteTooltip}
           onClick={handleFavoriteClick}
-          className={`p-2.5 rounded-xl border transition-all ${
+          className={`h-[42px] px-3 rounded-xl border transition-all inline-flex items-center gap-2 text-sm font-semibold ${
             filterFavorite
               ? 'border-yellow-400 bg-yellow-50 dark:bg-yellow-500/10 text-yellow-500'
-              : 'border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-900 text-gray-400 hover:bg-gray-50 dark:hover:bg-white/[0.06]'
+              : 'border-white/[0.08] bg-white/[0.04] text-gray-300 hover:bg-white/[0.08] hover:text-white'
           }`}
         >
           {activeFavoriteCollectionId ? <ChevronLeftIcon className="w-5 h-5" /> : <FavoriteIcon filled={filterFavorite} className="w-5 h-5" />}
+          <span>{activeFavoriteCollectionId ? '返回' : '收藏'}</span>
         </SearchActionButton>
         {inCollectionOverview && (
           <SearchActionButton
             tooltip="管理收藏夹"
             onClick={openManageCollectionsModal}
-            className="p-2.5 rounded-xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-900 text-gray-400 hover:bg-gray-50 dark:hover:bg-white/[0.06] transition-all"
+            className="inline-flex h-[42px] items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 text-gray-300 transition-all hover:bg-white/[0.08] hover:text-white"
           >
             <CollectionManageIcon className="w-5 h-5" />
           </SearchActionButton>
         )}
         {!inCollectionOverview && (
           <>
-            <div className="relative w-[88px]">
+            <div className="relative w-full sm:w-[112px]">
               <Select
                 value={filterStatus}
                 onChange={handleStatusChange}
@@ -168,7 +173,7 @@ export default function SearchBar() {
                   { label: '生成中', value: 'running' },
                   { label: '失败', value: 'error' },
                 ]}
-                className="px-3 py-2.5 rounded-xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-900 hover:bg-gray-50 dark:hover:bg-white/[0.06] text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 transition"
+                className="h-[42px] rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 text-sm text-gray-200 transition hover:bg-white/[0.08] focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
               />
             </div>
             {isFailedFilter && (
@@ -178,15 +183,14 @@ export default function SearchBar() {
                 disabled={failedCount === 0}
                 title={failedCount > 0 ? `清除 ${failedCount} 条失败记录` : '没有失败记录'}
                 aria-label={failedCount > 0 ? `清除 ${failedCount} 条失败记录` : '没有失败记录'}
-                className="flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-400 transition-all hover:bg-gray-50 hover:text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500/30 disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:bg-white disabled:hover:text-gray-400 dark:border-white/[0.08] dark:bg-gray-900 dark:text-gray-500 dark:hover:bg-white/[0.06] dark:hover:text-gray-300 dark:disabled:hover:bg-gray-900 dark:disabled:hover:text-gray-500"
+                className="flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.04] text-gray-400 transition-all hover:bg-white/[0.08] hover:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500/30 disabled:cursor-not-allowed disabled:opacity-55"
               >
                 <TrashIcon className="h-[18px] w-[18px]" />
               </button>
             )}
           </>
         )}
-      </div>
-      <div className="relative z-10 flex-1">
+        <div className="relative z-10 min-w-[180px] flex-1">
         <svg
           className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 dark:text-gray-500"
           fill="none"
@@ -206,8 +210,9 @@ export default function SearchBar() {
           onChange={(e) => setSearchQuery(e.target.value)}
           type="text"
           placeholder={inCollectionOverview ? '搜索收藏夹名称...' : '搜索提示词、参数...'}
-          className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 transition"
+          className="h-[42px] w-full rounded-xl border border-white/[0.08] bg-white/[0.04] py-2.5 pl-10 pr-4 text-sm text-gray-100 transition placeholder:text-gray-500 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
         />
+        </div>
       </div>
     </div>
   )

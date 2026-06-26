@@ -1,0 +1,288 @@
+import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { createChatMessage, DEFAULT_CHAT_MODEL, useChatStore, type ChatConversation } from '../chatStore'
+import { useStore } from '../store'
+import { callTextChatApi } from '../lib/chatApi'
+import { getPlaygroundApiChannelTarget, setPlaygroundApiChannelTarget } from '../lib/devProxy'
+import { getModelGroups } from '../lib/modelCatalog'
+import { normalizeSettings } from '../lib/apiProfiles'
+import ModelSelect from './ModelSelect'
+import MarkdownRenderer from './MarkdownRenderer'
+import { CloseIcon, CopyIcon, PlusIcon, RefreshIcon, TrashIcon } from './icons'
+
+const QUICK_PROMPTS = [
+  '帮我写一段商品介绍',
+  '把这段话改得更专业',
+  '生成一份 API 对接说明',
+  '整理成小红书风格文案',
+  '帮我写一份排查清单',
+]
+
+const TEXT_PROFILE_ID = 'yy-text-profile'
+
+function getTextProfile() {
+  const settings = normalizeSettings(useStore.getState().settings)
+  return settings.profiles.find((profile) => profile.id === TEXT_PROFILE_ID)
+    ?? settings.profiles.find((profile) => profile.provider === 'openai' && profile.apiMode === 'responses')
+    ?? settings.profiles.find((profile) => profile.id === settings.activeProfileId)
+    ?? settings.profiles[0]
+}
+
+function getActiveConversation(conversations: ChatConversation[], activeId: string | null, model: string) {
+  return conversations.find((conversation) => conversation.id === activeId)
+    ?? conversations[0]
+    ?? null
+}
+
+export default function ChatWorkspace() {
+  const conversations = useChatStore((s) => s.conversations)
+  const activeConversationId = useChatStore((s) => s.activeConversationId)
+  const input = useChatStore((s) => s.input)
+  const model = useChatStore((s) => s.model)
+  const status = useChatStore((s) => s.status)
+  const setInput = useChatStore((s) => s.setInput)
+  const setModel = useChatStore((s) => s.setModel)
+  const createConversation = useChatStore((s) => s.createConversation)
+  const setActiveConversationId = useChatStore((s) => s.setActiveConversationId)
+  const deleteConversation = useChatStore((s) => s.deleteConversation)
+  const clearActiveConversation = useChatStore((s) => s.clearActiveConversation)
+  const addMessage = useChatStore((s) => s.addMessage)
+  const updateMessage = useChatStore((s) => s.updateMessage)
+  const setStatus = useChatStore((s) => s.setStatus)
+  const showToast = useStore((s) => s.showToast)
+  const activeConversation = getActiveConversation(conversations, activeConversationId, model)
+  const messages = activeConversation?.messages ?? []
+  const abortRef = useRef<AbortController | null>(null)
+  const endRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!activeConversation && conversations.length === 0) createConversation()
+  }, [activeConversation, conversations.length, createConversation])
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: 'end' })
+  }, [messages.length, messages[messages.length - 1]?.content, status])
+
+  const copyLastAssistant = useCallback(async () => {
+    const last = [...messages].reverse().find((message) => message.role === 'assistant' && message.content.trim())
+    if (!last) {
+      showToast('还没有可复制的回复', 'info')
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(last.content)
+      showToast('已复制最后回复', 'success')
+    } catch {
+      showToast('复制失败', 'error')
+    }
+  }, [messages, showToast])
+
+  const refreshModels = useCallback(() => {
+    void getModelGroups('text', true).then(() => showToast('文本模型已刷新', 'success')).catch(() => showToast('模型刷新失败', 'error'))
+  }, [showToast])
+
+  const submit = useCallback(async () => {
+    const text = input.trim()
+    if (!text || status === 'streaming') return
+    const profile = getTextProfile()
+    if (!profile?.apiKey?.trim()) {
+      showToast('请先在设置里填写文本模型访问令牌', 'error')
+      return
+    }
+
+    const userMessage = createChatMessage('user', text)
+    const assistantMessage = createChatMessage('assistant', '')
+    setInput('')
+    addMessage(userMessage)
+    addMessage(assistantMessage)
+    setStatus('streaming')
+    const controller = new AbortController()
+    abortRef.current = controller
+
+    try {
+      const nextMessages = [...messages, userMessage]
+      const finalText = await callTextChatApi({
+        profile: {
+          ...profile,
+          baseUrl: getPlaygroundApiChannelTarget('text'),
+        },
+        model: activeConversation?.model || model || profile.model || DEFAULT_CHAT_MODEL,
+        messages: nextMessages,
+        signal: controller.signal,
+        onDelta: (delta) => {
+          const current = useChatStore.getState().conversations
+            .flatMap((conversation) => conversation.messages)
+            .find((message) => message.id === assistantMessage.id)
+          updateMessage(assistantMessage.id, { content: `${current?.content ?? ''}${delta}` })
+        },
+      })
+      updateMessage(assistantMessage.id, { content: finalText })
+      setStatus('idle')
+    } catch (err) {
+      if ((err as Error)?.name === 'AbortError') {
+        updateMessage(assistantMessage.id, { content: '已停止生成' })
+        setStatus('idle')
+        return
+      }
+      const message = err instanceof Error ? err.message : '对话请求失败'
+      updateMessage(assistantMessage.id, { content: message, error: message })
+      setStatus('error')
+      showToast(message, 'error')
+    } finally {
+      abortRef.current = null
+    }
+  }, [activeConversation?.model, addMessage, input, messages, model, setInput, setStatus, showToast, status, updateMessage])
+
+  const stop = useCallback(() => {
+    abortRef.current?.abort()
+  }, [])
+
+  const activeTitle = useMemo(() => activeConversation?.title || '新对话', [activeConversation?.title])
+
+  return (
+    <main data-home-main className="pb-36">
+      <div className="safe-area-x mx-auto flex max-w-7xl gap-4 px-3 pt-4 sm:px-4">
+        <aside className="hidden w-64 shrink-0 rounded-2xl border border-white/[0.08] bg-white/[0.035] p-3 lg:block">
+          <button
+            type="button"
+            onClick={createConversation}
+            className="mb-3 flex w-full items-center justify-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-semibold text-black transition hover:bg-gray-200"
+          >
+            <PlusIcon className="h-4 w-4" />
+            新对话
+          </button>
+          <div className="max-h-[calc(100vh-180px)] space-y-1 overflow-y-auto custom-scrollbar">
+            {conversations.map((conversation) => (
+              <button
+                key={conversation.id}
+                type="button"
+                onClick={() => setActiveConversationId(conversation.id)}
+                className={`group flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm transition ${conversation.id === activeConversation?.id ? 'bg-white/[0.1] text-white' : 'text-gray-400 hover:bg-white/[0.06] hover:text-gray-200'}`}
+              >
+                <span className="min-w-0 flex-1 truncate">{conversation.title}</span>
+                <span
+                  role="button"
+                  tabIndex={0}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    deleteConversation(conversation.id)
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter' && event.key !== ' ') return
+                    event.preventDefault()
+                    event.stopPropagation()
+                    deleteConversation(conversation.id)
+                  }}
+                  className="rounded-md p-1 text-gray-500 opacity-0 transition hover:bg-white/[0.08] hover:text-gray-200 group-hover:opacity-100"
+                  aria-label="删除对话"
+                >
+                  <CloseIcon className="h-3.5 w-3.5" />
+                </span>
+              </button>
+            ))}
+          </div>
+        </aside>
+
+        <section className="min-w-0 flex-1">
+          <div className="mb-4 flex flex-col gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.035] p-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <div className="truncate text-sm font-semibold text-white">{activeTitle}</div>
+              <div className="mt-1 text-xs text-gray-500">文本对话使用设置里的文本令牌和文本通道</div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <ModelSelect
+                purpose="text"
+                value={activeConversation?.model || model || DEFAULT_CHAT_MODEL}
+                fallbackModels={[DEFAULT_CHAT_MODEL, 'gpt-4.1-mini', 'gpt-4o-mini']}
+                onSelect={(target, nextModel) => {
+                  if (target) setPlaygroundApiChannelTarget(target, 'text')
+                  setModel(nextModel, target)
+                }}
+                className="h-9 max-w-[220px] rounded-xl border border-white/[0.08] bg-black/30 px-3 text-sm text-gray-100 outline-none"
+              />
+              <button type="button" onClick={refreshModels} className="rounded-xl border border-white/[0.08] p-2 text-gray-400 hover:bg-white/[0.06] hover:text-white" aria-label="刷新模型">
+                <RefreshIcon className="h-4 w-4" />
+              </button>
+              <button type="button" onClick={copyLastAssistant} className="rounded-xl border border-white/[0.08] p-2 text-gray-400 hover:bg-white/[0.06] hover:text-white" aria-label="复制最后回复">
+                <CopyIcon className="h-4 w-4" />
+              </button>
+              <button type="button" onClick={clearActiveConversation} className="rounded-xl border border-white/[0.08] p-2 text-gray-400 hover:bg-white/[0.06] hover:text-white" aria-label="清空对话">
+                <TrashIcon className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+
+          <div className="min-h-[calc(100vh-300px)] rounded-3xl border border-white/[0.08] bg-[#0b0b0d]/70 p-4 shadow-2xl shadow-black/20">
+            {messages.length === 0 ? (
+              <div className="flex min-h-[420px] flex-col items-center justify-center text-center">
+                <div className="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-yellow-400 text-lg font-black text-black shadow-[0_0_30px_rgba(250,204,21,0.22)]">Y</div>
+                <h2 className="text-xl font-bold text-white">你好，我是 YANGYANG 文本助手</h2>
+                <p className="mt-2 max-w-md text-sm leading-relaxed text-gray-500">写文案、改表达、做说明、整理方案都可以直接问。选择文本模型后，使用 Ctrl + Enter 发送。</p>
+                <div className="mt-6 flex max-w-2xl flex-wrap justify-center gap-2">
+                  {QUICK_PROMPTS.map((prompt) => (
+                    <button
+                      key={prompt}
+                      type="button"
+                      onClick={() => setInput(prompt)}
+                      className="rounded-full border border-white/[0.08] bg-white/[0.04] px-4 py-2 text-sm text-gray-300 transition hover:bg-white/[0.08] hover:text-white"
+                    >
+                      {prompt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-5">
+                {messages.map((message) => (
+                  <div key={message.id} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`max-w-[min(760px,92%)] rounded-2xl px-4 py-3 text-sm leading-relaxed ${message.role === 'user' ? 'bg-white text-black' : message.error ? 'border border-red-500/25 bg-red-500/10 text-red-200' : 'bg-white/[0.06] text-gray-100'}`}>
+                      {message.role === 'assistant'
+                        ? <MarkdownRenderer content={message.content || (status === 'streaming' ? '正在思考…' : '')} streaming={status === 'streaming'} />
+                        : <div className="whitespace-pre-wrap">{message.content}</div>}
+                    </div>
+                  </div>
+                ))}
+                <div ref={endRef} />
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
+
+      <div className="fixed inset-x-0 bottom-0 z-20 px-3 pb-4 sm:px-4">
+        <div className="safe-area-x mx-auto max-w-3xl rounded-[1.75rem] border border-white/[0.08] bg-[#0d0d0d]/95 p-3 shadow-2xl backdrop-blur">
+          <textarea
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
+            onKeyDown={(event) => {
+              if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+                event.preventDefault()
+                void submit()
+              }
+            }}
+            rows={3}
+            placeholder="输入问题，Ctrl + Enter 发送…"
+            className="w-full resize-none bg-transparent px-2 py-1.5 text-sm text-gray-100 outline-none placeholder:text-gray-500"
+          />
+          <div className="mt-2 flex items-center justify-between gap-2 px-1">
+            <div className="flex flex-wrap gap-2">
+              {QUICK_PROMPTS.slice(0, 3).map((prompt) => (
+                <button key={prompt} type="button" onClick={() => setInput(prompt)} className="hidden rounded-full bg-white/[0.05] px-3 py-1.5 text-xs text-gray-400 transition hover:bg-white/[0.08] hover:text-white sm:inline-flex">
+                  {prompt}
+                </button>
+              ))}
+            </div>
+            {status === 'streaming' ? (
+              <button type="button" onClick={stop} className="rounded-full bg-white/[0.08] px-5 py-2 text-sm font-semibold text-white transition hover:bg-white/[0.14]">
+                停止
+              </button>
+            ) : (
+              <button type="button" onClick={() => void submit()} disabled={!input.trim()} className="rounded-full bg-white px-5 py-2 text-sm font-semibold text-black transition hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-40">
+                发送
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </main>
+  )
+}
