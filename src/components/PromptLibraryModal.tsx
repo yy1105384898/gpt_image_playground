@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useStore } from '../store'
+import { useVideoStore } from '../videoStore'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { CloseIcon, CopyIcon } from './icons'
@@ -56,8 +57,10 @@ function getEntrySource(entry: PromptEntry) {
 
 export default function PromptLibraryModal() {
   const visible = useStore((s) => s.showPromptLibrary)
+  const target = useStore((s) => s.promptLibraryTarget)
   const setShowPromptLibrary = useStore((s) => s.setShowPromptLibrary)
   const setPrompt = useStore((s) => s.setPrompt)
+  const setVideoPrompt = useVideoStore((s) => s.setPrompt)
   const showToast = useStore((s) => s.showToast)
 
   const [model, setModel] = useState<ModelKey>('gptimage2')
@@ -148,7 +151,11 @@ export default function PromptLibraryModal() {
   }, [entries, query, category])
 
   const insertPrompt = (entry: PromptEntry) => {
-    setPrompt(entry.content)
+    if (target === 'video') {
+      setVideoPrompt(entry.content)
+    } else {
+      setPrompt(entry.content)
+    }
     showToast(`已填入：${entry.title}`, 'success')
     close()
   }

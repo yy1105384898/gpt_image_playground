@@ -5,6 +5,7 @@ import { createVideo, pollVideo, VIDEO_DURATIONS, VIDEO_ASPECTS, VIDEO_SIZES, ty
 import { getPlaygroundApiChannelTarget, setPlaygroundApiChannelTarget } from '../lib/devProxy'
 import { fileToDataUrl } from '../lib/dataUrl'
 import ModelSelect from './ModelSelect'
+import { CodeIcon } from './icons'
 
 function genLocalId(): string {
   return `v_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
@@ -33,6 +34,7 @@ export default function VideoWorkspace() {
   const updateTask = useVideoStore((s) => s.updateTask)
   const removeTask = useVideoStore((s) => s.removeTask)
   const showToast = useStore((s) => s.showToast)
+  const setShowPromptLibrary = useStore((s) => s.setShowPromptLibrary)
   const abortRef = useRef<Record<string, AbortController>>({})
 
   const runTask = useCallback(
@@ -226,6 +228,15 @@ export default function VideoWorkspace() {
             className="w-full resize-none bg-transparent px-2 py-1.5 text-sm text-gray-100 outline-none placeholder:text-gray-500"
           />
           <div className="mt-2 flex flex-wrap items-end gap-3 px-1">
+            <button
+              type="button"
+              onClick={() => setShowPromptLibrary(true, 'video')}
+              className="inline-flex h-8 items-center gap-1.5 rounded-full border border-white/[0.08] bg-white/[0.04] px-3 text-xs font-semibold text-gray-300 transition hover:bg-white/[0.08] hover:text-white"
+              title="打开提示词库"
+            >
+              <CodeIcon className="h-3.5 w-3.5" />
+              提示词库
+            </button>
             <label className="flex flex-col gap-1">
               <span className="text-[10px] text-gray-500">模型</span>
               <ModelSelect

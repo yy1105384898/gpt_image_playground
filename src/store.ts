@@ -888,7 +888,8 @@ interface AppState {
   settingsTabRequest: SettingsTab | null
   setShowSettings: (v: boolean, tab?: SettingsTab) => void
   showPromptLibrary: boolean
-  setShowPromptLibrary: (v: boolean) => void
+  promptLibraryTarget: 'image' | 'video'
+  setShowPromptLibrary: (v: boolean, target?: 'image' | 'video') => void
   supportPromptOpen: boolean
   supportPromptDismissed: boolean
   supportPromptSkippedForImportedData: boolean
@@ -1570,9 +1571,13 @@ export const useStore = create<AppState>()(
         })
       },
       showPromptLibrary: false,
-      setShowPromptLibrary: (showPromptLibrary) => {
+      promptLibraryTarget: 'image',
+      setShowPromptLibrary: (showPromptLibrary, promptLibraryTarget) => {
         if (showPromptLibrary) dismissAllTooltips()
-        set({ showPromptLibrary })
+        set({
+          showPromptLibrary,
+          ...(showPromptLibrary && promptLibraryTarget ? { promptLibraryTarget } : {}),
+        })
       },
       supportPromptOpen: false,
       supportPromptDismissed: false,
