@@ -409,6 +409,7 @@ export default function SettingsModal() {
   const [duplicateProfileTooltipVisible, setDuplicateProfileTooltipVisible] = useState(false)
   const [llmPromptTooltipVisible, setLlmPromptTooltipVisible] = useState(false)
   const [activeTab, setActiveTab] = useState<SettingsTab>('api')
+  const [apiPurposeTab, setApiPurposeTab] = useState<PlaygroundApiPurpose>('image')
   const [apiChannelTargets, setApiChannelTargets] = useState(() => ({
     text: getPlaygroundApiChannelTarget('text'),
     image: getPlaygroundApiChannelTarget('image'),
@@ -483,6 +484,8 @@ export default function SettingsModal() {
       apiMode: 'images',
       apiProxy: true,
       codexCli: false,
+      // 默认强制开启：本部署中转返回图片 URL 会因跨域导致下载/预览失败，
+      // response_format=b64_json 让中转直接返回 base64 数据避免此问题。
       responseFormatB64Json: true,
       streamImages: false,
     })
@@ -1566,6 +1569,20 @@ export default function SettingsModal() {
                   </span>
                 </div>
 
+                {/* 对话 / 生图 / 视频 子标签：一次只配置一档，避免三张卡堆叠 */}
+                <div className="grid grid-cols-3 gap-1 rounded-xl bg-gray-100/80 p-1 dark:bg-black/20">
+                  {([['text', '对话'], ['image', '生图'], ['video', '视频']] as const).map(([key, label]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setApiPurposeTab(key)}
+                      className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${apiPurposeTab === key ? 'bg-white text-blue-600 shadow-sm dark:bg-white/[0.1] dark:text-blue-300' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100'}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
                 {([
                   {
                     purpose: 'text' as const,
@@ -1585,7 +1602,7 @@ export default function SettingsModal() {
                     description: '视频页读取视频令牌。',
                     profile: simplifiedVideoProfile,
                   },
-                ]).map(({ purpose, title, description, profile }) => profile ? (
+                ]).filter((item) => item.purpose === apiPurposeTab).map(({ purpose, title, description, profile }) => profile ? (
                   <div key={purpose} className="rounded-2xl border border-gray-200/70 bg-white/85 p-5 shadow-sm dark:border-white/[0.08] dark:bg-white/[0.03]">
                     <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
                       <div>
@@ -2380,7 +2397,7 @@ export default function SettingsModal() {
                   > 本站点基于开源项目 [GPT Image Playground](https://github.com/CookSleep/gpt_image_playground) ([MIT](https://github.com/CookSleep/gpt_image_playground/blob/main/LICENSE)) 修改。
                 */}
                 <a
-                  href="https://github.com/CookSleep/gpt_image_playground"
+                  href="https://github.com/yy1105384898/image-generator"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="group flex flex-col items-center outline-none"
@@ -2388,19 +2405,19 @@ export default function SettingsModal() {
                   <div className="mb-5 flex h-[88px] w-[88px] items-center justify-center rounded-full border border-gray-200/80 bg-gray-50/50 text-gray-800 transition-colors group-hover:bg-gray-100 dark:border-white/[0.08] dark:bg-white/[0.02] dark:text-gray-100 dark:group-hover:bg-white/[0.06]">
                     <GithubIcon className="h-11 w-11" />
                   </div>
-                  <h4 className="text-[17px] font-bold text-gray-800 dark:text-gray-100">GPT Image Playground</h4>
+                  <h4 className="text-[17px] font-bold text-gray-800 dark:text-gray-100">YANGYANG 绘影</h4>
                   <p className="mt-1.5 text-[13px] text-gray-500 transition-colors group-hover:text-gray-700 dark:text-gray-400 dark:group-hover:text-gray-300">
-                    @CookSleep
+                    @yy1105384898
                   </p>
                 </a>
-                
+
                 <p className="mt-8 mb-6 max-w-[360px] text-center text-[13px] leading-relaxed text-gray-500 dark:text-gray-400">
                   本项目的成长离不开每一位用户的使用、反馈、贡献与支持，感谢一路有你。
                 </p>
 
                 <div className="flex flex-wrap items-center justify-center gap-3">
                   <a
-                    href="https://github.com/CookSleep/gpt_image_playground/issues"
+                    href="https://github.com/yy1105384898/image-generator/issues"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-gray-100/80 px-5 py-2.5 text-sm font-medium text-gray-700 transition-all hover:bg-gray-200 hover:text-gray-900 dark:bg-white/[0.06] dark:text-gray-300 dark:hover:bg-white/[0.1] dark:hover:text-white"

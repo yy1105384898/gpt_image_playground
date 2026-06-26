@@ -8,7 +8,7 @@ import { normalizeSettings } from '../lib/apiProfiles'
 import ModelSelect from './ModelSelect'
 import MarkdownRenderer from './MarkdownRenderer'
 import Select from './Select'
-import { CopyIcon, PlusIcon, RefreshIcon, TrashIcon } from './icons'
+import { BrandLogo, CopyIcon, PlusIcon, RefreshIcon, TrashIcon } from './icons'
 
 const QUICK_PROMPTS = [
   '帮我写一段商品介绍',
@@ -208,8 +208,8 @@ export default function ChatWorkspace() {
         <section className="mx-auto w-full max-w-3xl">
           {messages.length === 0 ? (
             <div className="flex min-h-[calc(100vh-330px)] flex-col items-center justify-center py-20 text-center">
-                <div className="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-yellow-400 text-lg font-black text-black shadow-[0_0_30px_rgba(250,204,21,0.22)]">Y</div>
-                <h2 className="text-xl font-bold text-white">你好，我是 YANGYANG 文本助手</h2>
+                <BrandLogo className="mb-4 h-12 w-12 rounded-2xl shadow-[0_0_30px_rgba(245,158,11,0.28)]" />
+                <h2 className="text-xl font-bold text-white">你好，我是 YANGYANG 绘影 文本助手</h2>
                 <p className="mt-2 max-w-md text-sm leading-relaxed text-gray-500">写文案、改表达、做说明、整理方案都可以直接问。选择文本模型后，使用 Ctrl + Enter 发送。</p>
                 <div className="mt-6 flex max-w-2xl flex-wrap justify-center gap-2">
                   {QUICK_PROMPTS.map((prompt) => (

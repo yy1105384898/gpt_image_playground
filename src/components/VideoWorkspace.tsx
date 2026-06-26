@@ -18,12 +18,6 @@ const STATUS_LABEL: Record<string, string> = {
   failed: '失败',
 }
 
-const MODE_OPTIONS: Array<{ value: VideoMode; label: string }> = [
-  { value: 'text', label: '文生' },
-  { value: 'image', label: '图生' },
-  { value: 'image_text', label: '图文生' },
-]
-
 export default function VideoWorkspace() {
   const prompt = useVideoStore((s) => s.prompt)
   const setPrompt = useVideoStore((s) => s.setPrompt)
@@ -36,6 +30,7 @@ export default function VideoWorkspace() {
   const showToast = useStore((s) => s.showToast)
   const setShowPromptLibrary = useStore((s) => s.setShowPromptLibrary)
   const abortRef = useRef<Record<string, AbortController>>({})
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const runTask = useCallback(
     async (task: VideoTask) => {
@@ -74,21 +69,19 @@ export default function VideoWorkspace() {
 
   const submit = useCallback(() => {
     const text = prompt.trim()
-    if (params.mode !== 'image' && !text) {
-      showToast('请先输入视频描述', 'info')
+    if (!text && !params.referenceImageDataUrl) {
+      showToast('请先输入描述或上传参考图', 'info')
       return
     }
-    if (params.mode !== 'text' && !params.referenceImageDataUrl) {
-      showToast('请先上传参考图', 'info')
-      return
-    }
+    // 模式按是否有参考图自动判定（与图生图一致）：有图=图文生，无图=文生。
+    const mode: VideoMode = params.referenceImageDataUrl ? 'image_text' : 'text'
     const taskPrompt = text || '请根据参考图生成自然动态视频'
     const task: VideoTask = {
       id: '',
       localId: genLocalId(),
       prompt: taskPrompt,
       model: params.model,
-      mode: params.mode,
+      mode,
       seconds: params.seconds,
       aspect: params.aspect,
       size: params.size,
@@ -108,8 +101,8 @@ export default function VideoWorkspace() {
       return
     }
     const dataUrl = await fileToDataUrl(file)
-    setParams({ referenceImageDataUrl: dataUrl, mode: params.mode === 'text' ? 'image_text' : params.mode })
-  }, [params.mode, setParams, showToast])
+    setParams({ referenceImageDataUrl: dataUrl })
+  }, [setParams, showToast])
 
   const cancel = useCallback(
     (task: VideoTask) => {
@@ -129,7 +122,7 @@ export default function VideoWorkspace() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
               </svg>
               <p>输入提示词开始生成视频</p>
-              <p className="mt-1 text-xs text-gray-600">支持文生、图生、图文生</p>
+              <p className="mt-1 text-xs text-gray-600">文生视频；上传参考图即图生视频</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -188,33 +181,31 @@ export default function VideoWorkspace() {
       {/* Bottom input bar */}
       <div className="fixed inset-x-0 bottom-0 z-20 px-3 pb-4 sm:px-4">
         <div className="safe-area-x mx-auto max-w-4xl rounded-[1.75rem] border border-white/[0.08] bg-[#0d0d0d]/95 p-3 shadow-2xl backdrop-blur">
-          {params.mode !== 'text' && (
+          {/* 隐藏的文件选择器，由下方 📎 按钮触发（与图生图一致） */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(event) => {
+              void handleReferenceFile(event.target.files?.[0])
+              event.currentTarget.value = ''
+            }}
+          />
+          {params.referenceImageDataUrl && (
             <div className="mb-2 flex items-center gap-2 px-1">
-              <label className="flex h-16 w-16 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-xl border border-dashed border-white/[0.14] bg-white/[0.04] text-[10px] text-gray-400 hover:border-blue-400/70 hover:text-blue-200">
-                {params.referenceImageDataUrl ? (
-                  <img src={params.referenceImageDataUrl} alt="参考图" className="h-full w-full object-cover" />
-                ) : (
-                  <span>参考图</span>
-                )}
-                <input
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={(event) => {
-                    void handleReferenceFile(event.target.files?.[0])
-                    event.currentTarget.value = ''
-                  }}
-                />
-              </label>
-              {params.referenceImageDataUrl && (
+              <div className="group relative h-16 w-16 shrink-0 overflow-hidden rounded-xl border border-white/[0.12]">
+                <img src={params.referenceImageDataUrl} alt="参考图" className="h-full w-full object-cover" />
                 <button
                   type="button"
                   onClick={() => setParams({ referenceImageDataUrl: undefined })}
-                  className="rounded-full bg-white/[0.08] px-2.5 py-1 text-[11px] text-gray-300 hover:bg-white/[0.14]"
+                  className="absolute right-0.5 top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-xs text-white hover:bg-black/80"
+                  aria-label="移除参考图"
                 >
-                  移除参考图
+                  ×
                 </button>
-              )}
+              </div>
+              <span className="text-[11px] text-gray-400">已添加参考图 · 将按「图生视频」生成</span>
             </div>
           )}
           <textarea
@@ -223,9 +214,9 @@ export default function VideoWorkspace() {
             onKeyDown={(e) => {
               if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') submit()
             }}
-            rows={2}
-            placeholder={params.mode === 'image' ? '可选：描述参考图如何动起来…' : '描述你想生成的视频，Ctrl + Enter 发送…'}
-            className="w-full resize-none bg-transparent px-2 py-1.5 text-sm text-gray-100 outline-none placeholder:text-gray-500"
+            rows={4}
+            placeholder={params.referenceImageDataUrl ? '可选：描述参考图如何动起来…' : '描述你想生成的视频，Ctrl + Enter 发送…'}
+            className="min-h-[104px] w-full resize-y bg-transparent px-2 py-1.5 text-sm leading-relaxed text-gray-100 outline-none placeholder:text-gray-500"
           />
           <div className="mt-2 flex flex-wrap items-end gap-3 px-1">
             <button
@@ -248,18 +239,6 @@ export default function VideoWorkspace() {
                   setParams({ model })
                 }}
               />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-[10px] text-gray-500">模式</span>
-              <select
-                value={params.mode}
-                onChange={(e) => setParams({ mode: e.target.value as VideoMode })}
-                className="rounded-lg border border-white/[0.08] bg-white/[0.04] px-2 py-1.5 text-xs text-gray-100 outline-none"
-              >
-                {MODE_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
             </label>
             <label className="flex flex-col gap-1">
               <span className="text-[10px] text-gray-500">时长</span>
@@ -303,9 +282,20 @@ export default function VideoWorkspace() {
             </label>
             <button
               type="button"
+              onClick={() => fileInputRef.current?.click()}
+              title="上传参考图（图生视频）"
+              aria-label="上传参考图"
+              className="ml-auto flex h-9 w-9 items-center justify-center rounded-full border border-white/[0.08] bg-white/[0.04] text-gray-300 transition hover:bg-white/[0.08] hover:text-white"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+              </svg>
+            </button>
+            <button
+              type="button"
               onClick={submit}
-              disabled={(params.mode !== 'image' && !prompt.trim()) || (params.mode !== 'text' && !params.referenceImageDataUrl)}
-              className="ml-auto rounded-full bg-white px-5 py-2 text-sm font-semibold text-black transition hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-40"
+              disabled={!prompt.trim() && !params.referenceImageDataUrl}
+              className="rounded-full bg-white px-5 py-2 text-sm font-semibold text-black transition hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-40"
             >
               生成视频
             </button>

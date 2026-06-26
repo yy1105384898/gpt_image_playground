@@ -1,7 +1,7 @@
 {
-  "name": "YANGYANG Image Pro",
-  "short_name": "YANGYANG",
-  "description": "YANGYANG 简洁生图 Pro",
+  "name": "YANGYANG 绘影 HuiYing · AI 生图生视频",
+  "short_name": "YANGYANG 绘影",
+  "description": "YANGYANG 绘影 HuiYing · AI 生图 / 视频创作台",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

@@ -6,7 +6,7 @@ import { dismissAllTooltips } from '../lib/tooltipDismiss'
 import ViewportTooltip from './ViewportTooltip'
 import HelpModal from './HelpModal'
 import { useFavoriteCollectionTitle } from './FavoriteCollections'
-import { HelpCircleIcon, InstallIcon, SettingsIcon } from './icons'
+import { BrandLogo, HelpCircleIcon, InstallIcon, SettingsIcon } from './icons'
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>
@@ -135,14 +135,14 @@ export default function Header() {
                 <>
                   <span className="min-w-0 truncate text-[17px] font-bold tracking-tight text-white sm:hidden" title={favoriteCollectionTitle}>{favoriteCollectionTitle}</span>
                   <span className="hidden items-center gap-2 text-lg font-black text-white sm:inline-flex">
-                    <span className="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-yellow-400 text-sm font-black text-black shadow-[0_0_22px_rgba(250,204,21,0.22)]">Y</span>
-                    <span>YANGYANG</span>
+                    <BrandLogo className="h-8 w-8 rounded-xl shadow-[0_0_22px_rgba(245,158,11,0.28)]" />
+                    <span>YANGYANG 绘影</span>
                   </span>
                 </>
               ) : (
                 <span className="inline-flex min-w-0 items-center gap-2 text-[17px] sm:text-lg font-black text-white">
-                  <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-yellow-400 text-sm font-black text-black shadow-[0_0_22px_rgba(250,204,21,0.22)]">Y</span>
-                  <span className="truncate">YANGYANG</span>
+                  <BrandLogo className="h-8 w-8 shrink-0 rounded-xl shadow-[0_0_22px_rgba(245,158,11,0.28)]" />
+                  <span className="truncate">YANGYANG 绘影</span>
                 </span>
               )}
               {hasUpdate && latestRelease && (
