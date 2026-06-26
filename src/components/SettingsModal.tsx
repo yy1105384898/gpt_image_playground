@@ -32,6 +32,7 @@ import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_STREAM_PARTIAL_IMAGES, type Agen
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { DEFAULT_DROPDOWN_MAX_HEIGHT, getDropdownMaxHeight } from '../lib/dropdown'
+import { getChannelModels, getDefaultSelectedModels, getSelectedModels, setSelectedModels } from '../lib/modelCatalog'
 import Select from './Select'
 import { Checkbox } from './Checkbox'
 import ViewportTooltip from './ViewportTooltip'
@@ -395,6 +396,8 @@ export default function SettingsModal() {
   const [showTokenVault, setShowTokenVault] = useState(false)
   const [, setTokenVaultVersion] = useState(0)
   const [tokenVaultNames, setTokenVaultNames] = useState<Record<string, string>>({})
+  const [, setModelPickerVersion] = useState(0)
+  const [modelPickerState, setModelPickerState] = useState<Record<string, { loading: boolean; models: string[] }>>({})
   const [showProfileMenu, setShowProfileMenu] = useState(false)
   const [profileMenuMaxHeight, setProfileMenuMaxHeight] = useState(DEFAULT_DROPDOWN_MAX_HEIGHT)
   const [showCustomProviderImport, setShowCustomProviderImport] = useState(false)
@@ -447,17 +450,19 @@ export default function SettingsModal() {
     const previousImageProfile = normalized.profiles.find((profile) => profile.id === SIMPLIFIED_IMAGE_PROFILE_ID)
     const previousVideoProfile = normalized.profiles.find((profile) => profile.id === SIMPLIFIED_VIDEO_PROFILE_ID)
     const active = getActiveApiProfile(normalized)
-    const selectedChannel = getPlaygroundApiChannelTarget('image')
-    const textConfig = resolveStoredPurposeConfig(selectedChannel, 'text')
-    const imageConfig = resolveStoredPurposeConfig(selectedChannel, 'image')
-    const videoConfig = resolveStoredPurposeConfig(selectedChannel, 'video')
+    const textChannel = getPlaygroundApiChannelTarget('text')
+    const imageChannel = getPlaygroundApiChannelTarget('image')
+    const videoChannel = getPlaygroundApiChannelTarget('video')
+    const textConfig = resolveStoredPurposeConfig(textChannel, 'text')
+    const imageConfig = resolveStoredPurposeConfig(imageChannel, 'image')
+    const videoConfig = resolveStoredPurposeConfig(videoChannel, 'video')
     const otherProfiles = normalized.profiles.filter((profile) => profile.id !== SIMPLIFIED_TEXT_PROFILE_ID && profile.id !== SIMPLIFIED_IMAGE_PROFILE_ID && profile.id !== SIMPLIFIED_VIDEO_PROFILE_ID)
     const textProfile = createDefaultOpenAIProfile({
       ...(previousTextProfile ?? {}),
       id: SIMPLIFIED_TEXT_PROFILE_ID,
       name: '文本模型',
       provider: 'openai',
-      baseUrl: selectedChannel,
+      baseUrl: textChannel,
       apiKey: textConfig.apiKey,
       model: textConfig.model || DEFAULT_RESPONSES_MODEL,
       timeout: previousTextProfile?.timeout ?? active.timeout,
@@ -471,13 +476,14 @@ export default function SettingsModal() {
       id: SIMPLIFIED_IMAGE_PROFILE_ID,
       name: '生图模型',
       provider: 'openai',
-      baseUrl: selectedChannel,
+      baseUrl: imageChannel,
       apiKey: imageConfig.apiKey,
       model: imageConfig.model || DEFAULT_IMAGES_MODEL,
       timeout: previousImageProfile?.timeout ?? active.timeout,
       apiMode: 'images',
       apiProxy: true,
       codexCli: false,
+      responseFormatB64Json: true,
       streamImages: false,
     })
 
@@ -486,7 +492,7 @@ export default function SettingsModal() {
       id: SIMPLIFIED_VIDEO_PROFILE_ID,
       name: '视频模型',
       provider: 'openai',
-      baseUrl: selectedChannel,
+      baseUrl: videoChannel,
       apiKey: videoConfig.apiKey,
       model: videoConfig.model || SIMPLIFIED_VIDEO_DEFAULT_MODEL,
       timeout: previousVideoProfile?.timeout ?? active.timeout,
@@ -519,6 +525,9 @@ export default function SettingsModal() {
   const simplifiedImageProfile = simplifiedSettings.profiles.find((profile) => profile.id === SIMPLIFIED_IMAGE_PROFILE_ID) ?? activeProfile
   const simplifiedVideoProfile = simplifiedSettings.profiles.find((profile) => profile.id === SIMPLIFIED_VIDEO_PROFILE_ID) ?? null
   const selectedApiChannelTarget = apiChannelTargets.image || getPlaygroundApiChannelTarget('image')
+  const getPurposeChannelTarget = (purpose: PlaygroundApiPurpose) => apiChannelTargets[purpose] || getPlaygroundApiChannelTarget(purpose)
+  const getPurposeModelPickerKey = (purpose: PlaygroundApiPurpose) => `${purpose}:${getPurposeChannelTarget(purpose)}`
+  const getPurposeSelectedModels = (purpose: PlaygroundApiPurpose) => getSelectedModels(getPurposeChannelTarget(purpose), purpose)
   const defaultProviderOrder = ['openai', 'fal', ...draft.customProviders.map(p => p.id)]
   const providerOrder = draft.providerOrder || defaultProviderOrder
 
@@ -832,15 +841,16 @@ export default function SettingsModal() {
   const updateSimplifiedProfile = (profileId: string, patch: Partial<ApiProfile>, commit = false) => {
     const baseDraft = ensureSimplifiedProfiles(draft)
     const purpose = SIMPLIFIED_PROFILE_PURPOSES[profileId]
+    const target = purpose ? getPurposeChannelTarget(purpose) : selectedApiChannelTarget
     if (purpose) {
-      saveStoredPurposeConfig(selectedApiChannelTarget, purpose, {
+      saveStoredPurposeConfig(target, purpose, {
         apiKey: patch.apiKey,
         model: patch.model,
       })
     }
     const nextDraft = normalizeSettings({
       ...baseDraft,
-      profiles: baseDraft.profiles.map((profile) => profile.id === profileId ? { ...profile, ...patch, baseUrl: selectedApiChannelTarget } : profile),
+      profiles: baseDraft.profiles.map((profile) => profile.id === profileId ? { ...profile, ...patch, baseUrl: target } : profile),
       activeProfileId: SIMPLIFIED_IMAGE_PROFILE_ID,
       agentApiConfigMode: 'hybrid',
       agentTextProfileId: SIMPLIFIED_TEXT_PROFILE_ID,
@@ -850,32 +860,25 @@ export default function SettingsModal() {
     if (commit) commitSettings(nextDraft)
   }
 
-  const updatePlaygroundApiChannel = (target: string) => {
-    ;(['text', 'image', 'video'] as const).forEach((purpose) => {
-      setPlaygroundApiChannelTarget(target, purpose)
-    })
-    setApiChannelTargets({
-      text: target,
-      image: target,
-      video: target,
-    })
+  const updatePlaygroundApiChannel = (purpose: PlaygroundApiPurpose, target: string) => {
+    setPlaygroundApiChannelTarget(target, purpose)
+    setApiChannelTargets((targets) => ({ ...targets, [purpose]: target }))
     const baseDraft = ensureSimplifiedProfiles(draft)
+    const profileId = purpose === 'text' ? SIMPLIFIED_TEXT_PROFILE_ID : purpose === 'image' ? SIMPLIFIED_IMAGE_PROFILE_ID : SIMPLIFIED_VIDEO_PROFILE_ID
+    const purposeConfig = resolveStoredPurposeConfig(target, purpose)
     const nextDraft = normalizeSettings({
       ...baseDraft,
-      profiles: baseDraft.profiles.map((profile) => (
-        profile.id === SIMPLIFIED_TEXT_PROFILE_ID ||
-        profile.id === SIMPLIFIED_IMAGE_PROFILE_ID ||
-        profile.id === SIMPLIFIED_VIDEO_PROFILE_ID
-          ? {
-              ...profile,
-              provider: 'openai',
-              baseUrl: target,
-              apiKey: resolveStoredPurposeConfig(target, SIMPLIFIED_PROFILE_PURPOSES[profile.id]).apiKey,
-              model: resolveStoredPurposeConfig(target, SIMPLIFIED_PROFILE_PURPOSES[profile.id]).model,
-              apiProxy: true,
-            }
-          : profile
-      )),
+      profiles: baseDraft.profiles.map((profile) => profile.id === profileId
+        ? {
+            ...profile,
+            provider: 'openai',
+            baseUrl: target,
+            apiKey: purposeConfig.apiKey,
+            model: purposeConfig.model,
+            apiProxy: true,
+            responseFormatB64Json: purpose === 'image' ? true : profile.responseFormatB64Json,
+          }
+        : profile),
       activeProfileId: SIMPLIFIED_IMAGE_PROFILE_ID,
       agentApiConfigMode: 'hybrid',
       agentTextProfileId: SIMPLIFIED_TEXT_PROFILE_ID,
@@ -889,7 +892,8 @@ export default function SettingsModal() {
 
   const getTokenVaultName = (purpose: PlaygroundApiPurpose) => {
     const profile = purpose === 'text' ? simplifiedTextProfile : purpose === 'video' ? simplifiedVideoProfile : simplifiedImageProfile
-    return tokenVaultNames[purpose] ?? `${getTokenVaultChannelLabel(selectedApiChannelTarget)}${profile?.apiKey?.trim() ? ' 当前令牌' : ' 令牌'}`
+    const target = getPurposeChannelTarget(purpose)
+    return tokenVaultNames[purpose] ?? `${getTokenVaultChannelLabel(target)}${profile?.apiKey?.trim() ? ' 当前令牌' : ' 令牌'}`
   }
 
   const saveCurrentTokenToVault = (purpose: PlaygroundApiPurpose, profile: ApiProfile) => {
@@ -898,8 +902,9 @@ export default function SettingsModal() {
       showToast('先填写令牌再保存到令牌库', 'info')
       return
     }
-    saveTokenVaultItem(selectedApiChannelTarget, getTokenVaultName(purpose), token)
-    saveStoredPurposeConfig(selectedApiChannelTarget, purpose, { apiKey: token, model: profile.model })
+    const target = getPurposeChannelTarget(purpose)
+    saveTokenVaultItem(target, getTokenVaultName(purpose), token)
+    saveStoredPurposeConfig(target, purpose, { apiKey: token, model: profile.model })
     setTokenVaultNames((names) => ({ ...names, [purpose]: '' }))
     refreshTokenVault()
     showToast('已保存到当前通道令牌库', 'success')
@@ -908,6 +913,33 @@ export default function SettingsModal() {
   const applyTokenFromVault = (purpose: PlaygroundApiPurpose, profile: ApiProfile, token: string) => {
     updateSimplifiedProfile(profile.id, { apiKey: token }, true)
     showToast('已填入令牌', 'success')
+  }
+
+  const loadPurposeModels = (purpose: PlaygroundApiPurpose) => {
+    const target = getPurposeChannelTarget(purpose)
+    const key = getPurposeModelPickerKey(purpose)
+    setModelPickerState((state) => ({ ...state, [key]: { loading: true, models: state[key]?.models ?? [] } }))
+    void getChannelModels(target, purpose, true)
+      .then((models) => {
+        const selected = getSelectedModels(target, purpose)
+        if (!selected.length) setSelectedModels(target, purpose, getDefaultSelectedModels(models, purpose))
+        setModelPickerState((state) => ({ ...state, [key]: { loading: false, models } }))
+        setModelPickerVersion((version) => version + 1)
+        showToast('模型已读取', 'success')
+      })
+      .catch(() => {
+        setModelPickerState((state) => ({ ...state, [key]: { loading: false, models: state[key]?.models ?? [] } }))
+        showToast('模型读取失败', 'error')
+      })
+  }
+
+  const togglePurposeModel = (purpose: PlaygroundApiPurpose, model: string) => {
+    const target = getPurposeChannelTarget(purpose)
+    const selected = new Set(getSelectedModels(target, purpose))
+    if (selected.has(model)) selected.delete(model)
+    else selected.add(model)
+    setSelectedModels(target, purpose, Array.from(selected))
+    setModelPickerVersion((version) => version + 1)
   }
 
   const removeTokenFromVault = (target: string, id: string) => {
@@ -1523,41 +1555,12 @@ export default function SettingsModal() {
                   <div>
                     <h4 className="text-base font-bold text-gray-900 dark:text-gray-50">访问令牌</h4>
                     <p className="mt-1 text-sm leading-relaxed text-gray-500 dark:text-gray-400">
-                      先选择厂商通道；下面分别配置对话、生图、视频令牌。
+                      对话、生图、视频分别选择厂商、令牌和工作台模型。
                     </p>
                   </div>
                   <span className="shrink-0 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
                     站点代理
                   </span>
-                </div>
-
-                <div className="rounded-2xl border border-gray-200/70 bg-white/85 p-5 shadow-sm dark:border-white/[0.08] dark:bg-white/[0.03]">
-                  <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
-                    <div>
-                      <div className="text-sm font-bold text-gray-900 dark:text-gray-50">厂商</div>
-                      <div data-selectable-text className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
-                        NewAPI / SubAPI 统一切换，下面三类模型各自读取对应令牌。
-                      </div>
-                    </div>
-                    <span className="w-fit rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-600 dark:bg-white/[0.08] dark:text-gray-300">
-                      {getTokenVaultChannelLabel(selectedApiChannelTarget)}
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2 rounded-xl bg-gray-100/80 p-1 dark:bg-black/20">
-                    {PLAYGROUND_API_CHANNELS.map((channel) => {
-                      const checked = selectedApiChannelTarget === channel.target
-                      return (
-                        <button
-                          key={channel.id}
-                          type="button"
-                          onClick={() => updatePlaygroundApiChannel(channel.target)}
-                          className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${checked ? 'bg-white text-blue-600 shadow-sm dark:bg-white/[0.1] dark:text-blue-300' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100'}`}
-                        >
-                          {channel.label}
-                        </button>
-                      )
-                    })}
-                  </div>
                 </div>
 
                 {([
@@ -1592,6 +1595,30 @@ export default function SettingsModal() {
                     </div>
 
                     <div className="space-y-4">
+                      <div>
+                        <div className="mb-2 flex items-center justify-between gap-2">
+                          <span className="text-sm font-medium text-gray-700 dark:text-gray-200">厂商</span>
+                          <span className="rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-medium text-gray-600 dark:bg-white/[0.08] dark:text-gray-300">
+                            {getTokenVaultChannelLabel(getPurposeChannelTarget(purpose))}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 rounded-xl bg-gray-100/80 p-1 dark:bg-black/20">
+                          {PLAYGROUND_API_CHANNELS.map((channel) => {
+                            const checked = getPurposeChannelTarget(purpose) === channel.target
+                            return (
+                              <button
+                                key={channel.id}
+                                type="button"
+                                onClick={() => updatePlaygroundApiChannel(purpose, channel.target)}
+                                className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${checked ? 'bg-white text-blue-600 shadow-sm dark:bg-white/[0.1] dark:text-blue-300' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100'}`}
+                              >
+                                {channel.label}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+
                       <label className="block">
                         <span className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-200">{title}访问令牌</span>
                         <div className="relative">
@@ -1618,10 +1645,10 @@ export default function SettingsModal() {
                       <div className="rounded-xl border border-gray-200/70 bg-gray-50/80 p-3 dark:border-white/[0.08] dark:bg-black/20">
                         <div className="mb-2 flex items-center justify-between gap-2">
                           <span className="text-xs font-semibold text-gray-600 dark:text-gray-300">
-                            {getTokenVaultChannelLabel(selectedApiChannelTarget)} 令牌库
+                            {getTokenVaultChannelLabel(getPurposeChannelTarget(purpose))} 令牌库
                           </span>
                           <span className="text-[11px] text-gray-400">
-                            {getTokenVaultItems(selectedApiChannelTarget).length} 个
+                            {getTokenVaultItems(getPurposeChannelTarget(purpose)).length} 个
                           </span>
                         </div>
                         <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
@@ -1647,7 +1674,7 @@ export default function SettingsModal() {
                             }}
                             options={[
                               { label: '选择已保存令牌', value: '' },
-                              ...getTokenVaultItems(selectedApiChannelTarget).map((item) => ({
+                              ...getTokenVaultItems(getPurposeChannelTarget(purpose)).map((item) => ({
                                 label: `${item.name} · ${maskToken(item.token)}`,
                                 value: item.token,
                               })),
@@ -1663,6 +1690,66 @@ export default function SettingsModal() {
                           </button>
                         </div>
                       </div>
+
+                      <div className="rounded-xl border border-gray-200/70 bg-gray-50/80 p-3 dark:border-white/[0.08] dark:bg-black/20">
+                        <div className="mb-2 flex items-center justify-between gap-2">
+                          <span className="text-xs font-semibold text-gray-600 dark:text-gray-300">工作台模型</span>
+                          <button
+                            type="button"
+                            onClick={() => loadPurposeModels(purpose)}
+                            className="rounded-lg border border-gray-200/80 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 transition hover:bg-gray-100 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200 dark:hover:bg-white/[0.08]"
+                          >
+                            {modelPickerState[getPurposeModelPickerKey(purpose)]?.loading ? '读取中…' : '读取模型'}
+                          </button>
+                        </div>
+                        <div className="grid max-h-44 gap-2 overflow-y-auto pr-1 custom-scrollbar sm:grid-cols-2">
+                          {(modelPickerState[getPurposeModelPickerKey(purpose)]?.models.length
+                            ? modelPickerState[getPurposeModelPickerKey(purpose)]!.models
+                            : getSelectedModels(getPurposeChannelTarget(purpose), purpose)
+                          ).map((model) => {
+                            const checked = getSelectedModels(getPurposeChannelTarget(purpose), purpose).includes(model)
+                            return (
+                              <label key={model} className="flex min-w-0 items-center gap-2 rounded-lg border border-gray-200/70 bg-white px-2.5 py-2 text-xs text-gray-700 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => togglePurposeModel(purpose, model)}
+                                  className="h-3.5 w-3.5 rounded border-gray-300 text-blue-500"
+                                />
+                                <span className="truncate" title={model}>{model}</span>
+                              </label>
+                            )
+                          })}
+                          {!modelPickerState[getPurposeModelPickerKey(purpose)]?.models.length && !getSelectedModels(getPurposeChannelTarget(purpose), purpose).length && (
+                            <div className="rounded-lg border border-dashed border-gray-200 px-3 py-4 text-center text-xs text-gray-400 dark:border-white/[0.08] sm:col-span-2">
+                              点击读取模型后选择工作台可用模型
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {purpose === 'image' && (
+                        <div className="rounded-xl border border-blue-200/80 bg-blue-50/80 p-3 dark:border-blue-400/20 dark:bg-blue-500/10">
+                          <div className="flex items-start justify-between gap-3">
+                            <div data-selectable-text>
+                              <div className="text-xs font-semibold text-blue-800 dark:text-blue-200">返回 Base64 图片数据</div>
+                              <div className="mt-1 text-xs leading-relaxed text-blue-700/80 dark:text-blue-200/70">
+                                已默认打开，避免生成结果只返回图片 URL 时因跨域导致预览/下载失败。
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => updateSimplifiedProfile(profile.id, { responseFormatB64Json: !profile.responseFormatB64Json }, true)}
+                              className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${profile.responseFormatB64Json ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                              role="switch"
+                              aria-checked={!!profile.responseFormatB64Json}
+                              aria-label="返回 Base64 图片数据"
+                            >
+                              <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${profile.responseFormatB64Json ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ) : null)}

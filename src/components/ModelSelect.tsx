@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { useModelGroups } from '../lib/modelCatalog'
+import { getSelectedModels, useModelGroups } from '../lib/modelCatalog'
 import { getPlaygroundApiChannelTarget, type PlaygroundApiPurpose } from '../lib/devProxy'
 
 const SEP = '::yy-model::'
@@ -24,9 +24,12 @@ export default function ModelSelect({ purpose, value, target, showAllChannels = 
   const activeTarget = target || getPlaygroundApiChannelTarget(purpose)
   const activeGroups = useMemo(() => showAllChannels ? groups : groups.filter((group) => group.target === activeTarget), [activeTarget, groups, showAllChannels])
   const displayGroups = useMemo(() => activeGroups.map((group) => {
-    if (group.target !== activeTarget || !value || group.models.includes(value)) return group
-    return { ...group, models: [value, ...group.models] }
-  }), [activeGroups, activeTarget, value])
+    const selected = getSelectedModels(group.target, purpose)
+    const selectedSet = new Set(selected)
+    const baseModels = selected.length ? group.models.filter((model) => selectedSet.has(model)) : group.models
+    if (group.target !== activeTarget || !value || baseModels.includes(value)) return { ...group, models: baseModels }
+    return { ...group, models: [value, ...baseModels] }
+  }), [activeGroups, activeTarget, purpose, value])
 
   const hasGroups = displayGroups.length > 0
   const selectValue = useMemo(() => {
