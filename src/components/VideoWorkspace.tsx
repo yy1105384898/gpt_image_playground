@@ -1,9 +1,10 @@
-import { useCallback, useRef } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { useStore } from '../store'
 import { useVideoStore, type VideoTask } from '../videoStore'
 import { createVideo, pollVideo, VIDEO_DURATIONS, VIDEO_ASPECTS, VIDEO_SIZES, type VideoMode } from '../lib/videoApi'
 import { getPlaygroundApiChannelTarget, setPlaygroundApiChannelTarget } from '../lib/devProxy'
 import { fileToDataUrl } from '../lib/dataUrl'
+import { getAtImageQuery, getImageMentionLabel, replaceImageMentionsForApi, stripImageMentionMarkers } from '../lib/promptImageMentions'
 import ModelSelect from './ModelSelect'
 import { CodeIcon } from './icons'
 
@@ -16,6 +17,12 @@ const STATUS_LABEL: Record<string, string> = {
   processing: '生成中',
   completed: '已完成',
   failed: '失败',
+}
+
+function formatVideoPromptForApi(prompt: string, hasReference: boolean): string {
+  const withSelectedMentions = replaceImageMentionsForApi(prompt, hasReference ? 1 : 0, (index) => `[reference image ${index + 1}]`)
+  const withTypedMention = hasReference ? withSelectedMentions.replace(/@图1(?!\d)/g, '[reference image 1]') : withSelectedMentions
+  return stripImageMentionMarkers(withTypedMention)
 }
 
 export default function VideoWorkspace() {
@@ -31,6 +38,18 @@ export default function VideoWorkspace() {
   const setShowPromptLibrary = useStore((s) => s.setShowPromptLibrary)
   const abortRef = useRef<Record<string, AbortController>>({})
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const promptInputRef = useRef<HTMLTextAreaElement>(null)
+  const [cursorPos, setCursorPos] = useState(0)
+  const [atMenuDismissed, setAtMenuDismissed] = useState(false)
+
+  const atImageQuery = params.referenceImageDataUrl && !atMenuDismissed
+    ? getAtImageQuery(prompt, cursorPos, { length: 1 })
+    : null
+  const showAtImageMenu = Boolean(atImageQuery)
+  const selectedPrompt = useMemo(
+    () => formatVideoPromptForApi(prompt, Boolean(params.referenceImageDataUrl)),
+    [params.referenceImageDataUrl, prompt],
+  )
 
   const runTask = useCallback(
     async (task: VideoTask) => {
@@ -41,7 +60,7 @@ export default function VideoWorkspace() {
           {
             model: task.model,
             mode: task.mode,
-            prompt: task.prompt,
+            prompt: formatVideoPromptForApi(task.prompt, Boolean(task.referenceImageDataUrl)),
             seconds: task.seconds,
             aspect: task.aspect,
             size: task.size,
@@ -79,7 +98,7 @@ export default function VideoWorkspace() {
     const task: VideoTask = {
       id: '',
       localId: genLocalId(),
-      prompt: taskPrompt,
+      prompt: stripImageMentionMarkers(taskPrompt),
       model: params.model,
       mode,
       seconds: params.seconds,
@@ -90,9 +109,8 @@ export default function VideoWorkspace() {
       createdAt: Date.now(),
     }
     addTask(task)
-    setPrompt('')
     void runTask(task)
-  }, [prompt, params, addTask, setPrompt, runTask, showToast])
+  }, [prompt, params, addTask, runTask, showToast])
 
   const handleReferenceFile = useCallback(async (file: File | undefined) => {
     if (!file) return
@@ -111,6 +129,23 @@ export default function VideoWorkspace() {
     },
     [removeTask],
   )
+
+  const selectReferenceMention = useCallback(() => {
+    const query = getAtImageQuery(prompt, cursorPos, { length: 1 })
+    if (!query) return
+    const mention = getImageMentionLabel(0)
+    const nextPrompt = `${prompt.slice(0, query.start)}${mention}${prompt.slice(cursorPos)}`
+    const nextCursor = query.start + mention.length
+    setPrompt(nextPrompt)
+    setAtMenuDismissed(true)
+    window.setTimeout(() => {
+      const el = promptInputRef.current
+      if (!el) return
+      el.focus()
+      el.setSelectionRange(nextCursor, nextCursor)
+      setCursorPos(nextCursor)
+    }, 0)
+  }, [cursorPos, prompt, setPrompt])
 
   return (
     <>
@@ -142,7 +177,7 @@ export default function VideoWorkspace() {
                   </div>
                   <div className="flex items-start justify-between gap-2 p-3">
                     <div className="min-w-0">
-                      <p className="line-clamp-2 text-xs text-gray-300">{task.prompt}</p>
+                      <p className="line-clamp-2 text-xs text-gray-300">{stripImageMentionMarkers(task.prompt)}</p>
                       <p className="mt-1 text-[10px] text-gray-500">
                         {task.model} · {task.mode === 'text' ? '文生' : task.mode === 'image' ? '图生' : '图文生'} · {task.seconds}s · {task.aspect} · {task.size}
                       </p>
@@ -208,16 +243,58 @@ export default function VideoWorkspace() {
               <span className="text-[11px] text-gray-400">已添加参考图 · 将按「图生视频」生成</span>
             </div>
           )}
-          <textarea
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            onKeyDown={(e) => {
-              if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') submit()
-            }}
-            rows={4}
-            placeholder={params.referenceImageDataUrl ? '可选：描述参考图如何动起来…' : '描述你想生成的视频，Ctrl + Enter 发送…'}
-            className="min-h-[104px] w-full resize-y bg-transparent px-2 py-1.5 text-sm leading-relaxed text-gray-100 outline-none placeholder:text-gray-500"
-          />
+          <div className="relative">
+            {showAtImageMenu && (
+              <div className="absolute bottom-full left-4 z-50 mb-2 w-64 overflow-hidden rounded-2xl border border-white/[0.08] bg-[#171717]/95 p-1.5 shadow-xl ring-1 ring-white/10 backdrop-blur-xl">
+                <div className="px-2 pb-1 pt-0.5 text-[11px] text-gray-500">选择图片引用</div>
+                <button
+                  type="button"
+                  onMouseDown={(event) => {
+                    event.preventDefault()
+                    selectReferenceMention()
+                  }}
+                  className="flex w-full items-center gap-2 rounded-xl bg-blue-500/10 px-2 py-1.5 text-left text-xs text-blue-200 transition-colors hover:bg-blue-500/15"
+                >
+                  <span className="h-9 w-9 overflow-hidden rounded-lg border border-white/[0.08] bg-black">
+                    {params.referenceImageDataUrl && <img src={params.referenceImageDataUrl} alt="" className="h-full w-full object-cover" />}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate font-medium">{getImageMentionLabel(0)}</span>
+                </button>
+              </div>
+            )}
+            <textarea
+              ref={promptInputRef}
+              value={prompt}
+              onChange={(e) => {
+                setPrompt(e.target.value)
+                setCursorPos(e.target.selectionStart)
+                setAtMenuDismissed(false)
+              }}
+              onSelect={(e) => {
+                setCursorPos(e.currentTarget.selectionStart)
+                setAtMenuDismissed(false)
+              }}
+              onBlur={(e) => setCursorPos(e.currentTarget.selectionStart)}
+              onKeyDown={(e) => {
+                if (showAtImageMenu && (e.key === 'Enter' || e.key === 'Tab')) {
+                  e.preventDefault()
+                  selectReferenceMention()
+                  return
+                }
+                if (e.key === 'Escape') {
+                  setAtMenuDismissed(true)
+                  return
+                }
+                if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') submit()
+              }}
+              rows={4}
+              placeholder={params.referenceImageDataUrl ? '可选：描述参考图如何动起来，输入 @ 可引用参考图…' : '描述你想生成的视频，Ctrl + Enter 发送…'}
+              className="min-h-[104px] w-full resize-y bg-transparent px-2 py-1.5 text-sm leading-relaxed text-gray-100 outline-none placeholder:text-gray-500"
+            />
+          </div>
+          {params.referenceImageDataUrl && selectedPrompt !== prompt && (
+            <div className="px-2 text-[10px] text-gray-600">发送时会把 @图1 转成参考图说明，原提示词保留在输入框。</div>
+          )}
           <div className="mt-2 flex flex-wrap items-end gap-3 px-1">
             <button
               type="button"

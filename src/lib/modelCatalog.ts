@@ -30,6 +30,13 @@ const SIMPLIFIED_PROFILE_IDS: Record<PlaygroundApiPurpose, string> = {
 const VIDEO_RE = /video|sora|kling|veo|seedance|runway|pika|hailuo|vidu|wan2|minimax-video/i
 const IMAGE_RE = /image|flux|dall[-_ ]?e|imagen|nano[-_ ]?banana|banana|qwen.*image|stable|\bsd\d|midjourney|\bmj\b|recraft|ideogram|seedream|kolors|hunyuan.*image|grok.*image/i
 const SELECTED_MODELS_STORAGE_KEY = 'yy-image-pro.selected-models'
+const CHANNEL_MODELS_STORAGE_KEY = 'yy-image-pro.channel-model-cache'
+const CHANNEL_MODELS_CACHE_TTL_MS = 5 * 60 * 1000
+
+interface StoredChannelModelCache {
+  updatedAt: number
+  models: string[]
+}
 
 function selectedModelsKey(target: string, purpose: PlaygroundApiPurpose) {
   return `${purpose}:${target}`
@@ -37,6 +44,29 @@ function selectedModelsKey(target: string, purpose: PlaygroundApiPurpose) {
 
 const channelModelCache = new Map<string, string[]>()
 const channelModelInflight = new Map<string, Promise<string[]>>()
+
+function readStoredChannelModels(key: string): string[] | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(CHANNEL_MODELS_STORAGE_KEY) || '{}') as Record<string, StoredChannelModelCache>
+    const item = parsed?.[key]
+    if (!item || Date.now() - item.updatedAt > CHANNEL_MODELS_CACHE_TTL_MS) return null
+    return Array.isArray(item.models) ? item.models.filter(Boolean) : null
+  } catch {
+    return null
+  }
+}
+
+function writeStoredChannelModels(key: string, models: string[]) {
+  if (typeof window === 'undefined') return
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(CHANNEL_MODELS_STORAGE_KEY) || '{}') as Record<string, StoredChannelModelCache>
+    parsed[key] = { updatedAt: Date.now(), models }
+    window.localStorage.setItem(CHANNEL_MODELS_STORAGE_KEY, JSON.stringify(parsed))
+  } catch {
+    // localStorage 满或禁用时保留内存缓存即可。
+  }
+}
 
 function readSelectedModelsState(): SelectedModelsState {
   if (typeof window === 'undefined') return {}
@@ -140,11 +170,19 @@ async function fetchChannelModels(target: string, purpose: PlaygroundApiPurpose)
 export async function getChannelModels(target: string, purpose: PlaygroundApiPurpose, force = false): Promise<string[]> {
   const key = selectedModelsKey(target, purpose)
   if (!force && channelModelCache.has(key)) return channelModelCache.get(key)!
+  if (!force) {
+    const stored = readStoredChannelModels(key)
+    if (stored) {
+      channelModelCache.set(key, stored)
+      return stored
+    }
+  }
   if (!force && channelModelInflight.has(key)) return channelModelInflight.get(key)!
   const task = (async () => {
     try {
       const all = await fetchChannelModels(target, purpose)
       channelModelCache.set(key, all)
+      writeStoredChannelModels(key, all)
       return all
     } finally {
       channelModelInflight.delete(key)

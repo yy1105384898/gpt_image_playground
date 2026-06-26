@@ -1,5 +1,6 @@
-const CACHE_NAME = 'gpt-image-playground-v0.6.10-20260626'
+const CACHE_NAME = 'gpt-image-playground-v0.6.10-20260626-speed'
 const APP_SHELL = ['./', './index.html', './manifest.webmanifest', './pwa-icon.svg']
+const STATIC_PATH_RE = /\/(?:assets|prompt-library)\//
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -24,6 +25,7 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(request.url)
   if (url.origin !== self.location.origin) return
+  if (url.pathname.startsWith('/api') || url.pathname.startsWith('/api-proxy')) return
 
   if (request.mode === 'navigate') {
     event.respondWith(
@@ -35,6 +37,10 @@ self.addEventListener('fetch', (event) => {
         })
         .catch(() => caches.match('./index.html')),
     )
+    return
+  }
+
+  if (!STATIC_PATH_RE.test(url.pathname) && !APP_SHELL.some((path) => url.pathname.endsWith(path.replace('./', '/')))) {
     return
   }
 

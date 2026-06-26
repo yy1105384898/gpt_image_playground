@@ -60,6 +60,7 @@ export default function PromptLibraryModal() {
   const target = useStore((s) => s.promptLibraryTarget)
   const setShowPromptLibrary = useStore((s) => s.setShowPromptLibrary)
   const setPrompt = useStore((s) => s.setPrompt)
+  const videoPrompt = useVideoStore((s) => s.prompt)
   const setVideoPrompt = useVideoStore((s) => s.setPrompt)
   const showToast = useStore((s) => s.showToast)
 
@@ -152,7 +153,8 @@ export default function PromptLibraryModal() {
 
   const insertPrompt = (entry: PromptEntry) => {
     if (target === 'video') {
-      setVideoPrompt(entry.content)
+      const current = videoPrompt.trim()
+      setVideoPrompt(current ? `${current}\n\n${entry.content}` : entry.content)
     } else {
       setPrompt(entry.content)
     }

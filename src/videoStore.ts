@@ -68,9 +68,22 @@ export const useVideoStore = create<VideoState>()(
       // Object URLs from blobs don't survive reloads; drop in-flight/blob tasks on rehydrate.
       partialize: (s) => ({
         prompt: s.prompt,
-        params: s.params,
+        params: { ...s.params, referenceImageDataUrl: undefined },
         tasks: s.tasks.filter((t) => t.status === 'completed' && t.videoUrl?.startsWith('http')),
       }),
+      merge: (persisted, current) => {
+        const state = persisted as Partial<VideoState>
+        return {
+          ...current,
+          ...state,
+          params: {
+            ...current.params,
+            ...(state.params ?? {}),
+            referenceImageDataUrl: undefined,
+          },
+          tasks: state.tasks ?? current.tasks,
+        }
+      },
     },
   ),
 )
