@@ -47,26 +47,98 @@ function getVisibleOffsetBeforeNode(root: HTMLElement, target: Node): number {
   return offset
 }
 
+function getMentionTagForBoundary(root: HTMLElement, container: Node) {
+  const el = container.nodeType === Node.ELEMENT_NODE
+    ? container as Element
+    : container.parentElement
+  const tag = el?.closest('.mention-tag')
+  return tag && root.contains(tag) ? tag : null
+}
+
+function getBoundaryOffsetInMention(tag: Element, container: Node, offset: number) {
+  try {
+    const range = document.createRange()
+    range.selectNodeContents(tag)
+    range.setEnd(container, offset)
+    return range.toString().length
+  } catch {
+    return getMentionTagTextLength(tag)
+  }
+}
+
+function getContentEditableBoundaryOffset(
+  root: HTMLElement,
+  container: Node,
+  offset: number,
+  edge: 'start' | 'end',
+  collapsed: boolean,
+) {
+  if (container === root) {
+    let visibleOffset = 0
+    for (const child of Array.from(root.childNodes).slice(0, offset)) {
+      visibleOffset += getNodeVisibleTextLength(child)
+    }
+    return visibleOffset
+  }
+
+  if (!root.contains(container)) {
+    const position = root.compareDocumentPosition(container)
+    if (position & Node.DOCUMENT_POSITION_PRECEDING) return 0
+    if (position & Node.DOCUMENT_POSITION_FOLLOWING) return root.textContent?.length ?? 0
+    if (container.contains(root)) {
+      const children = Array.from(container.childNodes)
+      const rootIndex = children.indexOf(root as any)
+      return offset <= rootIndex ? 0 : root.textContent?.length ?? 0
+    }
+    return edge === 'start' ? 0 : root.textContent?.length ?? 0
+  }
+
+  const mentionTag = getMentionTagForBoundary(root, container)
+  if (mentionTag) {
+    const mentionStart = getVisibleOffsetBeforeNode(root, mentionTag)
+    const mentionLength = getMentionTagTextLength(mentionTag)
+    if (!collapsed) return edge === 'start' ? mentionStart : mentionStart + mentionLength
+    const mentionOffset = getBoundaryOffsetInMention(mentionTag, container, offset)
+    return mentionStart + (mentionOffset < mentionLength / 2 ? 0 : mentionLength)
+  }
+
+  if (container.nodeType === Node.TEXT_NODE) {
+    return getVisibleOffsetBeforeNode(root, container) + offset
+  }
+
+  const element = container.nodeType === Node.ELEMENT_NODE ? container as Element : null
+  if (element) {
+    let visibleOffset = element === root ? 0 : getVisibleOffsetBeforeNode(root, element)
+    for (const child of Array.from(element.childNodes).slice(0, offset)) {
+      visibleOffset += getNodeVisibleTextLength(child)
+    }
+    return visibleOffset
+  }
+
+  return root.textContent?.length ?? 0
+}
+
 function getContentEditableCursor(el: HTMLElement): number {
+  const range = getContentEditableSelection(el)
+  return range.start
+}
+
+function getContentEditableSelection(el: HTMLElement): { start: number; end: number } {
   const sel = window.getSelection()
-  if (!sel || sel.rangeCount === 0) return el.textContent?.length ?? 0
+  if (!sel || sel.rangeCount === 0) {
+    const end = el.textContent?.length ?? 0
+    return { start: end, end }
+  }
   try {
     const range = sel.getRangeAt(0)
-    if (!el.contains(range.startContainer)) return el.textContent?.length ?? 0
-    if (range.startContainer === el) {
-      return Array.from(el.childNodes)
-        .slice(0, range.startOffset)
-        .reduce((sum, child) => sum + getNodeVisibleTextLength(child), 0)
-    }
-    if (range.startContainer.nodeType === Node.TEXT_NODE) {
-      return getVisibleOffsetBeforeNode(el, range.startContainer) + range.startOffset
-    }
-    const element = range.startContainer as Element
-    const tag = element.closest?.('.mention-tag')
-    if (tag && el.contains(tag)) return getVisibleOffsetBeforeNode(el, tag) + getMentionTagTextLength(tag)
-    return getVisibleOffsetBeforeNode(el, element)
+    const start = getContentEditableBoundaryOffset(el, range.startContainer, range.startOffset, 'start', range.collapsed)
+    const end = range.collapsed
+      ? start
+      : getContentEditableBoundaryOffset(el, range.endContainer, range.endOffset, 'end', false)
+    return { start, end }
   } catch {
-    return el.textContent?.length ?? 0
+    const end = el.textContent?.length ?? 0
+    return { start: end, end }
   }
 }
 
@@ -87,6 +159,31 @@ function getContentEditablePlainText(el: HTMLElement): string {
   return text.replace(/\r\n?/g, '\n')
 }
 
+function syncMentionTagSelection(el: HTMLElement) {
+  const tags = el.querySelectorAll<HTMLElement>('.mention-tag')
+  const sel = window.getSelection()
+  if (!sel || sel.rangeCount === 0) {
+    tags.forEach((tag) => tag.classList.remove('selected'))
+    return
+  }
+
+  const range = sel.getRangeAt(0)
+  if (range.collapsed) {
+    tags.forEach((tag) => tag.classList.remove('selected'))
+    return
+  }
+
+  tags.forEach((tag) => {
+    let isSelected = false
+    try {
+      isSelected = range.intersectsNode(tag)
+    } catch {
+      isSelected = false
+    }
+    tag.classList.toggle('selected', isSelected)
+  })
+}
+
 function setContentEditableCursor(el: HTMLElement, offset: number) {
   const sel = window.getSelection()
   if (!sel) return
@@ -99,7 +196,11 @@ function setContentEditableCursor(el: HTMLElement, offset: number) {
     if (mentionTag) {
       if (remaining <= node.length) {
         const range = document.createRange()
-        range.setStartAfter(mentionTag)
+        if (remaining < node.length / 2) {
+          range.setStartBefore(mentionTag)
+        } else {
+          range.setStartAfter(mentionTag)
+        }
         range.collapse(true)
         sel.removeAllRanges()
         sel.addRange(range)
@@ -140,6 +241,22 @@ function getVideoPromptHtml(prompt: string, inputImages: InputImage[]) {
     .join('')
 }
 
+function normalizeVideoReferenceMentions(prompt: string, hasReference: boolean) {
+  if (!hasReference) return prompt
+  const selectedMention = getSelectedImageMentionLabel(0)
+  return prompt.replace(/\u2063[^\u2064]*\u2064|@图1(?!\d)/g, (match) =>
+    match.startsWith('\u2063') ? match : selectedMention,
+  )
+}
+
+function markRemovedVideoReferenceMentions(prompt: string) {
+  return prompt
+    .replace(/\u2063@图1\u2064|@图1(?!\d)/g, '@已移除图片')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+}
+
 const STATUS_LABEL: Record<string, string> = {
   queued: '排队中',
   processing: '生成中',
@@ -157,7 +274,8 @@ const STATUS_FILTERS = [
 type VideoStatusFilter = (typeof STATUS_FILTERS)[number]['value']
 
 function formatVideoPromptForApi(prompt: string, hasReference: boolean): string {
-  const withSelectedMentions = replaceImageMentionsForApi(prompt, hasReference ? 1 : 0, (index) => `[reference image ${index + 1}]`)
+  const normalizedPrompt = normalizeVideoReferenceMentions(prompt, hasReference)
+  const withSelectedMentions = replaceImageMentionsForApi(normalizedPrompt, hasReference ? 1 : 0, (index) => `[reference image ${index + 1}]`)
   const withTypedMention = hasReference ? withSelectedMentions.replace(/@图1(?!\d)/g, '[reference image 1]') : withSelectedMentions
   return stripImageMentionMarkers(withTypedMention)
 }
@@ -170,7 +288,7 @@ function getVideoModeLabel(mode: VideoMode) {
 
 function getVideoModeForInput(prompt: string, hasReference: boolean): VideoMode {
   if (!hasReference) return 'text'
-  const semanticPrompt = stripImageMentionMarkers(prompt)
+  const semanticPrompt = stripImageMentionMarkers(normalizeVideoReferenceMentions(prompt, hasReference))
     .replace(/@图\d+/g, '')
     .trim()
   return semanticPrompt ? 'image_text' : 'image'
@@ -240,6 +358,7 @@ export default function VideoWorkspace() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const promptInputRef = useRef<HTMLDivElement>(null)
   const isUserInputRef = useRef(false)
+  const pendingPromptCursorRef = useRef<number | null>(null)
   const [cursorPos, setCursorPos] = useState(0)
   const [atMenuDismissed, setAtMenuDismissed] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -297,9 +416,14 @@ export default function VideoWorkspace() {
       isUserInputRef.current = false
       return
     }
-    const html = getVideoPromptHtml(prompt, videoPromptImages)
+    const normalizedPrompt = normalizeVideoReferenceMentions(prompt, Boolean(params.referenceImageDataUrl))
+    const html = getVideoPromptHtml(normalizedPrompt, videoPromptImages)
     if (el.innerHTML !== html) el.innerHTML = html
-  }, [prompt, videoPromptImages])
+    if (pendingPromptCursorRef.current != null) {
+      setContentEditableCursor(el, pendingPromptCursorRef.current)
+      pendingPromptCursorRef.current = null
+    }
+  }, [params.referenceImageDataUrl, prompt, videoPromptImages])
 
   const runTask = useCallback(
     async (task: VideoTask) => {
@@ -337,7 +461,7 @@ export default function VideoWorkspace() {
   )
 
   const submit = useCallback(() => {
-    const text = prompt.trim()
+    const text = normalizeVideoReferenceMentions(prompt.trim(), Boolean(params.referenceImageDataUrl))
     if (!text && !params.referenceImageDataUrl) {
       showToast('请先输入描述或上传参考图', 'info')
       return
@@ -383,6 +507,8 @@ export default function VideoWorkspace() {
     const query = getAtImageQuery(visiblePrompt, cursorPos, { length: 1 })
     if (!query) return
     const inserted = insertImageMentionAtVisibleRange(prompt, query.start, cursorPos, 0)
+    isUserInputRef.current = false
+    pendingPromptCursorRef.current = inserted.cursor
     setPrompt(inserted.prompt)
     setAtMenuDismissed(true)
     window.setTimeout(() => {
@@ -822,7 +948,11 @@ export default function VideoWorkspace() {
                 <img src={params.referenceImageDataUrl} alt="参考图" className="h-full w-full object-cover" />
                 <button
                   type="button"
-                  onClick={() => setParams({ referenceImageDataUrl: undefined })}
+                  onClick={() => {
+                    setParams({ referenceImageDataUrl: undefined })
+                    setPrompt(markRemovedVideoReferenceMentions(prompt))
+                    setAtMenuDismissed(true)
+                  }}
                   className="absolute right-0.5 top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-xs text-white hover:bg-black/80"
                   aria-label="移除参考图"
                 >
@@ -860,9 +990,14 @@ export default function VideoWorkspace() {
               data-placeholder={params.referenceImageDataUrl ? '可选：描述参考图如何动起来，输入 @ 可引用参考图…' : '描述你想生成的视频，Ctrl + Enter 发送…'}
               onInput={(e) => {
                 const el = e.currentTarget
-                isUserInputRef.current = true
-                setPrompt(getContentEditablePlainText(el))
-                setCursorPos(getContentEditableCursor(el))
+                const cursor = getContentEditableCursor(el)
+                const rawPrompt = getContentEditablePlainText(el)
+                const normalizedPrompt = normalizeVideoReferenceMentions(rawPrompt, Boolean(params.referenceImageDataUrl))
+                const shouldRenderMention = normalizedPrompt !== rawPrompt
+                isUserInputRef.current = !shouldRenderMention
+                if (shouldRenderMention) pendingPromptCursorRef.current = cursor
+                setPrompt(normalizedPrompt)
+                setCursorPos(cursor)
                 setAtMenuDismissed(false)
               }}
               onMouseUp={(e) => {
