@@ -1,12 +1,13 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../store'
 import { useVideoStore, type VideoTask } from '../videoStore'
 import { createVideo, pollVideo, VIDEO_DURATIONS, VIDEO_ASPECTS, VIDEO_SIZES, type VideoMode } from '../lib/videoApi'
 import { getPlaygroundApiChannelTarget, setPlaygroundApiChannelTarget } from '../lib/devProxy'
 import { fileToDataUrl } from '../lib/dataUrl'
 import { getAtImageQuery, getImageMentionLabel, replaceImageMentionsForApi, stripImageMentionMarkers } from '../lib/promptImageMentions'
+import { copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import ModelSelect from './ModelSelect'
-import { CodeIcon } from './icons'
+import { CloseIcon, CodeIcon, CopyIcon, DownloadIcon, RefreshIcon, TrashIcon } from './icons'
 
 function genLocalId(): string {
   return `v_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
@@ -19,10 +20,50 @@ const STATUS_LABEL: Record<string, string> = {
   failed: '失败',
 }
 
+const STATUS_FILTERS = [
+  { value: 'all', label: '全部状态' },
+  { value: 'running', label: '生成中' },
+  { value: 'completed', label: '已完成' },
+  { value: 'failed', label: '失败' },
+] as const
+
+type VideoStatusFilter = (typeof STATUS_FILTERS)[number]['value']
+
 function formatVideoPromptForApi(prompt: string, hasReference: boolean): string {
   const withSelectedMentions = replaceImageMentionsForApi(prompt, hasReference ? 1 : 0, (index) => `[reference image ${index + 1}]`)
   const withTypedMention = hasReference ? withSelectedMentions.replace(/@图1(?!\d)/g, '[reference image 1]') : withSelectedMentions
   return stripImageMentionMarkers(withTypedMention)
+}
+
+function getVideoModeLabel(mode: VideoMode) {
+  if (mode === 'text') return '文生视频'
+  if (mode === 'image') return '图生视频'
+  return '图文生视频'
+}
+
+function getVideoStatusFilter(task: VideoTask): VideoStatusFilter {
+  if (task.status === 'queued' || task.status === 'processing') return 'running'
+  return task.status
+}
+
+function getVideoAspectLabel(task: VideoTask) {
+  if (task.aspect && task.aspect !== 'auto') return task.aspect
+  if (task.size === '1280x720' || task.size === '1920x1080') return '16:9'
+  return '9:16'
+}
+
+function getVideoDisplaySize(task: VideoTask) {
+  return task.size && task.size !== '自动' ? task.size : '自动'
+}
+
+function formatTime(ts: number) {
+  return new Date(ts).toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 export default function VideoWorkspace() {
@@ -41,6 +82,9 @@ export default function VideoWorkspace() {
   const promptInputRef = useRef<HTMLTextAreaElement>(null)
   const [cursorPos, setCursorPos] = useState(0)
   const [atMenuDismissed, setAtMenuDismissed] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState<VideoStatusFilter>('all')
+  const [detailTaskId, setDetailTaskId] = useState<string | null>(null)
 
   const atImageQuery = params.referenceImageDataUrl && !atMenuDismissed
     ? getAtImageQuery(prompt, cursorPos, { length: 1 })
@@ -50,6 +94,31 @@ export default function VideoWorkspace() {
     () => formatVideoPromptForApi(prompt, Boolean(params.referenceImageDataUrl)),
     [params.referenceImageDataUrl, prompt],
   )
+  const filteredTasks = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    return [...tasks]
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .filter((task) => {
+        if (statusFilter !== 'all' && getVideoStatusFilter(task) !== statusFilter) return false
+        if (!q) return true
+        return [
+          task.prompt,
+          task.model,
+          task.id,
+          task.mode,
+          task.aspect,
+          task.size,
+          task.status,
+        ].some((value) => String(value || '').toLowerCase().includes(q))
+      })
+  }, [searchQuery, statusFilter, tasks])
+  const detailTask = detailTaskId
+    ? tasks.find((task) => task.localId === detailTaskId) ?? null
+    : null
+
+  useEffect(() => {
+    if (detailTaskId && !detailTask) setDetailTaskId(null)
+  }, [detailTask, detailTaskId])
 
   const runTask = useCallback(
     async (task: VideoTask) => {
@@ -147,10 +216,65 @@ export default function VideoWorkspace() {
     }, 0)
   }, [cursorPos, prompt, setPrompt])
 
+  const copyPrompt = useCallback(async (task: VideoTask) => {
+    try {
+      await copyTextToClipboard(stripImageMentionMarkers(task.prompt))
+      showToast('提示词已复制', 'success')
+    } catch (err) {
+      showToast(getClipboardFailureMessage('复制失败', err), 'error')
+    }
+  }, [showToast])
+
+  const reuseTask = useCallback((task: VideoTask) => {
+    setPrompt(task.prompt || '')
+    setParams({
+      model: task.model,
+      mode: task.mode,
+      seconds: task.seconds,
+      aspect: task.aspect,
+      size: task.size,
+      referenceImageDataUrl: task.referenceImageDataUrl,
+    })
+    setDetailTaskId(null)
+    showToast('已复用配置到输入框', 'success')
+  }, [setParams, setPrompt, showToast])
+
   return (
     <>
       <main data-home-main className="pb-64">
         <div className="safe-area-x max-w-7xl mx-auto px-3 sm:px-4 pt-4">
+          <div className="mb-5 flex flex-col gap-3 border-b border-white/[0.08] pb-4 sm:flex-row sm:items-center">
+            <button
+              type="button"
+              onClick={() => setShowPromptLibrary(true, 'video')}
+              className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-white px-4 text-sm font-bold text-black transition hover:bg-gray-200"
+            >
+              <CodeIcon className="h-4 w-4" />
+              提示词库
+            </button>
+            <select
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value as VideoStatusFilter)}
+              className="h-11 rounded-xl border border-white/[0.08] bg-white/[0.04] px-4 text-sm text-gray-200 outline-none transition hover:bg-white/[0.06]"
+            >
+              {STATUS_FILTERS.map((item) => (
+                <option key={item.value} value={item.value} className="bg-[#171717] text-gray-100">{item.label}</option>
+              ))}
+            </select>
+            <div className="relative min-w-0 flex-1">
+              <svg className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="搜索提示词、模型、参数..."
+                className="h-11 w-full rounded-xl border border-white/[0.08] bg-white/[0.04] pl-11 pr-4 text-sm text-gray-100 outline-none transition placeholder:text-gray-600 focus:border-white/[0.18] focus:bg-white/[0.06]"
+              />
+            </div>
+          </div>
+
           {tasks.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-24 text-center text-gray-500">
               <svg className="mb-3 h-12 w-12 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -159,59 +283,269 @@ export default function VideoWorkspace() {
               <p>输入提示词开始生成视频</p>
               <p className="mt-1 text-xs text-gray-600">文生视频；上传参考图即图生视频</p>
             </div>
+          ) : filteredTasks.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-24 text-center text-gray-500">
+              <svg className="mb-3 h-12 w-12 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414A1 1 0 0014 14.414V19l-4 2v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+              </svg>
+              <p>没有匹配的视频任务</p>
+            </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {tasks.map((task) => (
-                <div key={task.localId} className="overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.03]">
-                  <div className="relative flex aspect-[9/16] w-full items-center justify-center bg-black/40">
+              {filteredTasks.map((task) => (
+                <article
+                  key={task.localId}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setDetailTaskId(task.localId)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') setDetailTaskId(task.localId)
+                  }}
+                  className="group flex h-40 cursor-pointer overflow-hidden rounded-xl border border-white/[0.08] bg-white/[0.035] transition hover:border-white/[0.18] hover:bg-white/[0.055]"
+                >
+                  <div className="relative flex h-full w-40 shrink-0 items-center justify-center overflow-hidden bg-black/35">
                     {task.status === 'completed' && task.videoUrl ? (
-                      <video src={task.videoUrl} controls playsInline className="h-full w-full object-contain" />
+                      <video src={task.videoUrl} muted playsInline preload="metadata" className="h-full w-full object-cover transition duration-500 group-hover:scale-[1.03]" />
                     ) : task.status === 'failed' ? (
-                      <div className="px-4 text-center text-xs text-red-300">{task.error || '视频生成失败'}</div>
+                      <div className="flex flex-col items-center gap-2 px-4 text-center">
+                        <svg className="h-8 w-8 text-red-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 9v3.75m0 3.75h.008v.008H12v-.008zM10.29 3.86 1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                        </svg>
+                        <span className="text-xs text-red-300">失败</span>
+                      </div>
                     ) : (
                       <div className="flex flex-col items-center gap-3 text-gray-400">
                         <span className="h-7 w-7 animate-spin rounded-full border-2 border-white/20 border-t-white/80" />
                         <span className="text-xs">{STATUS_LABEL[task.status] ?? '生成中'}…</span>
                       </div>
                     )}
-                  </div>
-                  <div className="flex items-start justify-between gap-2 p-3">
-                    <div className="min-w-0">
-                      <p className="line-clamp-2 text-xs text-gray-300">{stripImageMentionMarkers(task.prompt)}</p>
-                      <p className="mt-1 text-[10px] text-gray-500">
-                        {task.model} · {task.mode === 'text' ? '文生' : task.mode === 'image' ? '图生' : '图文生'} · {task.seconds}s · {task.aspect} · {task.size}
-                      </p>
-                      {task.id && (
-                        <p className="mt-0.5 truncate text-[10px] text-gray-600" title={task.id}>
-                          ID {task.id}
-                        </p>
-                      )}
+                    <div className="absolute left-2 top-2 flex gap-1">
+                      <span className="rounded bg-black/70 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-white backdrop-blur">{getVideoAspectLabel(task)}</span>
+                      <span className="rounded bg-black/70 px-1.5 py-0.5 text-[11px] font-semibold text-white/90 backdrop-blur">{getVideoDisplaySize(task)}</span>
                     </div>
-                    <div className="flex shrink-0 gap-2">
-                      {task.status === 'completed' && task.videoUrl && (
-                        <a
-                          href={task.videoUrl}
-                          download={`video-${task.id || task.localId}.mp4`}
-                          className="rounded-full bg-white/[0.08] px-2.5 py-1 text-[11px] text-gray-200 hover:bg-white/[0.14]"
+                    <span className={`absolute bottom-2 left-2 rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                      task.status === 'failed'
+                        ? 'bg-red-500/20 text-red-200'
+                        : task.status === 'completed'
+                        ? 'bg-emerald-500/20 text-emerald-200'
+                        : 'bg-blue-500/20 text-blue-200'
+                    }`}>
+                      {STATUS_LABEL[task.status] ?? task.status}
+                    </span>
+                  </div>
+                  <div className="flex min-w-0 flex-1 flex-col p-3">
+                    <p className="line-clamp-3 text-sm font-medium leading-relaxed text-gray-300">{stripImageMentionMarkers(task.prompt) || '(无提示词)'}</p>
+                    <div className="mt-auto min-w-0">
+                      <div className="mb-2 flex max-w-full gap-1.5 overflow-x-auto pr-2 hide-scrollbar mask-edge-r">
+                        <span className="inline-flex shrink-0 items-center gap-1 rounded bg-white/[0.04] px-1.5 py-0.5 text-xs text-gray-400">
+                          <CodeIcon className="h-3 w-3" />
+                          {getVideoModeLabel(task.mode)}
+                        </span>
+                        <span className="shrink-0 rounded bg-white/[0.04] px-1.5 py-0.5 text-xs text-gray-400">{task.seconds}s</span>
+                        <span className="shrink-0 rounded bg-white/[0.04] px-1.5 py-0.5 text-xs text-gray-400">{task.model}</span>
+                      </div>
+                      <div className="flex items-center justify-end gap-1" onClick={(event) => event.stopPropagation()}>
+                        {task.status === 'completed' && task.videoUrl && (
+                          <a
+                            href={task.videoUrl}
+                            download={`video-${task.id || task.localId}.mp4`}
+                            className="rounded-md p-1.5 text-gray-400 transition hover:bg-blue-500/10 hover:text-blue-300"
+                            title="下载视频"
+                          >
+                            <DownloadIcon className="h-4 w-4" />
+                          </a>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => reuseTask(task)}
+                          className="rounded-md p-1.5 text-gray-400 transition hover:bg-blue-500/10 hover:text-blue-300"
+                          title="复用配置"
                         >
-                          下载
-                        </a>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => cancel(task)}
-                        className="rounded-full bg-white/[0.08] px-2.5 py-1 text-[11px] text-gray-300 hover:bg-white/[0.14]"
-                      >
-                        {task.status === 'completed' || task.status === 'failed' ? '删除' : '取消'}
-                      </button>
+                          <RefreshIcon className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => copyPrompt(task)}
+                          className="rounded-md p-1.5 text-gray-400 transition hover:bg-white/[0.08] hover:text-white"
+                          title="复制提示词"
+                        >
+                          <CopyIcon className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => cancel(task)}
+                          className="rounded-md p-1.5 text-gray-400 transition hover:bg-red-500/10 hover:text-red-300"
+                          title={task.status === 'completed' || task.status === 'failed' ? '删除视频' : '取消生成'}
+                        >
+                          <TrashIcon className="h-4 w-4" />
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
+                </article>
               ))}
             </div>
           )}
         </div>
       </main>
+
+      {detailTask && (
+        <div
+          data-no-drag-select
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/72 p-4 backdrop-blur-md sm:p-6"
+          onClick={() => setDetailTaskId(null)}
+        >
+          <section
+            className="grid max-h-[88vh] w-full max-w-6xl overflow-hidden rounded-2xl border border-white/[0.1] bg-[#171717] shadow-2xl md:grid-cols-[minmax(0,1.35fr)_minmax(340px,0.9fr)]"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="relative flex min-h-[46vh] items-center justify-center bg-black/35 p-4 md:min-h-[70vh]">
+              <div className="absolute left-4 top-4 z-10 flex gap-1.5">
+                <span className="rounded bg-black/70 px-2 py-1 font-mono text-xs font-semibold text-white backdrop-blur">{getVideoAspectLabel(detailTask)}</span>
+                <span className="rounded bg-black/70 px-2 py-1 text-xs font-semibold text-white/90 backdrop-blur">{getVideoDisplaySize(detailTask)}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDetailTaskId(null)}
+                className="absolute right-4 top-4 z-10 flex h-9 w-9 items-center justify-center rounded-full bg-black/55 text-gray-300 transition hover:bg-black/75 hover:text-white"
+                aria-label="关闭详情"
+              >
+                <CloseIcon className="h-5 w-5" />
+              </button>
+              {detailTask.status === 'completed' && detailTask.videoUrl ? (
+                <video src={detailTask.videoUrl} controls playsInline className="max-h-[76vh] w-full rounded-lg object-contain" />
+              ) : detailTask.status === 'failed' ? (
+                <div className="max-w-md px-6 text-center text-sm text-red-300">{detailTask.error || '视频生成失败'}</div>
+              ) : (
+                <div className="flex flex-col items-center gap-3 text-gray-400">
+                  <span className="h-9 w-9 animate-spin rounded-full border-2 border-white/20 border-t-white/80" />
+                  <span className="text-sm">{STATUS_LABEL[detailTask.status] ?? '生成中'}…</span>
+                </div>
+              )}
+            </div>
+
+            <aside className="flex max-h-[42vh] min-h-0 flex-col overflow-hidden border-t border-white/[0.08] md:max-h-none md:border-l md:border-t-0">
+              <div className="min-h-0 flex-1 overflow-y-auto p-5 custom-scrollbar">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                    detailTask.status === 'failed'
+                      ? 'bg-red-500/12 text-red-300'
+                      : detailTask.status === 'completed'
+                      ? 'bg-emerald-500/12 text-emerald-300'
+                      : 'bg-blue-500/12 text-blue-300'
+                  }`}>
+                    {STATUS_LABEL[detailTask.status] ?? detailTask.status}
+                  </span>
+                  {detailTask.id && (
+                    <span className="min-w-0 truncate text-[11px] text-gray-600" title={detailTask.id}>ID {detailTask.id}</span>
+                  )}
+                </div>
+
+                <p className="mb-5 whitespace-pre-wrap text-sm leading-relaxed text-gray-300">
+                  {stripImageMentionMarkers(detailTask.prompt) || '(无提示词)'}
+                </p>
+
+                {detailTask.referenceImageDataUrl && (
+                  <div className="mb-5">
+                    <div className="mb-2 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-gray-500">
+                      参考图
+                      <CopyIcon className="h-3.5 w-3.5" />
+                    </div>
+                    <img
+                      src={detailTask.referenceImageDataUrl}
+                      alt="参考图"
+                      className="h-16 w-16 rounded-lg border border-white/[0.08] object-cover"
+                    />
+                  </div>
+                )}
+
+                <h3 className="mb-2 text-xs font-medium uppercase tracking-wider text-gray-500">参数配置</h3>
+                <div className="mb-5 grid grid-cols-2 gap-2 text-xs">
+                  <div className="min-w-0 overflow-hidden rounded-lg bg-white/[0.035] px-3 py-2">
+                    <span className="text-gray-500">来源</span>
+                    <div className="mt-0.5 truncate font-medium text-gray-300">Videos · {detailTask.model}</div>
+                  </div>
+                  <div className="min-w-0 overflow-hidden rounded-lg bg-white/[0.035] px-3 py-2">
+                    <span className="text-gray-500">模式</span>
+                    <div className="mt-0.5 truncate font-medium text-gray-300">{getVideoModeLabel(detailTask.mode)}</div>
+                  </div>
+                  <div className="min-w-0 overflow-hidden rounded-lg bg-white/[0.035] px-3 py-2">
+                    <span className="text-gray-500">比例</span>
+                    <div className="mt-0.5 truncate font-medium text-gray-300">{getVideoAspectLabel(detailTask)}</div>
+                  </div>
+                  <div className="min-w-0 overflow-hidden rounded-lg bg-white/[0.035] px-3 py-2">
+                    <span className="text-gray-500">尺寸</span>
+                    <div className="mt-0.5 truncate font-medium text-gray-300">{getVideoDisplaySize(detailTask)}</div>
+                  </div>
+                  <div className="min-w-0 overflow-hidden rounded-lg bg-white/[0.035] px-3 py-2">
+                    <span className="text-gray-500">时长</span>
+                    <div className="mt-0.5 truncate font-medium text-gray-300">{detailTask.seconds} 秒</div>
+                  </div>
+                  <div className="min-w-0 overflow-hidden rounded-lg bg-white/[0.035] px-3 py-2">
+                    <span className="text-gray-500">状态</span>
+                    <div className="mt-0.5 truncate font-medium text-gray-300">{STATUS_LABEL[detailTask.status] ?? detailTask.status}</div>
+                  </div>
+                </div>
+
+                <div className="text-xs text-gray-500">
+                  创建于 {formatTime(detailTask.createdAt)}
+                </div>
+              </div>
+
+              <div className="grid shrink-0 grid-cols-4 gap-2 border-t border-white/[0.08] p-4">
+                <button
+                  type="button"
+                  onClick={() => reuseTask(detailTask)}
+                  className="col-span-2 flex h-11 items-center justify-center gap-1.5 rounded-xl bg-blue-500/10 text-sm font-semibold text-blue-300 transition hover:bg-blue-500/18"
+                >
+                  <RefreshIcon className="h-4 w-4" />
+                  复用配置
+                </button>
+                {detailTask.status === 'completed' && detailTask.videoUrl ? (
+                  <a
+                    href={detailTask.videoUrl}
+                    download={`video-${detailTask.id || detailTask.localId}.mp4`}
+                    className="col-span-2 flex h-11 items-center justify-center gap-1.5 rounded-xl bg-blue-500/10 text-sm font-semibold text-blue-300 transition hover:bg-blue-500/18"
+                  >
+                    <DownloadIcon className="h-4 w-4" />
+                    下载视频
+                  </a>
+                ) : (
+                  <button
+                    type="button"
+                    disabled
+                    className="col-span-2 flex h-11 cursor-not-allowed items-center justify-center gap-1.5 rounded-xl bg-white/[0.04] text-sm font-semibold text-gray-600"
+                  >
+                    <DownloadIcon className="h-4 w-4" />
+                    下载视频
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => copyPrompt(detailTask)}
+                  className="col-span-2 flex h-11 items-center justify-center gap-1.5 rounded-xl bg-white/[0.04] text-sm font-semibold text-gray-300 transition hover:bg-white/[0.08] hover:text-white"
+                  title="复制提示词"
+                >
+                  <CopyIcon className="h-4 w-4" />
+                  复制提示词
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    cancel(detailTask)
+                    setDetailTaskId(null)
+                  }}
+                  className="col-span-2 flex h-11 items-center justify-center gap-1.5 rounded-xl bg-red-500/10 text-sm font-semibold text-red-300 transition hover:bg-red-500/18"
+                  title={detailTask.status === 'completed' || detailTask.status === 'failed' ? '删除视频' : '取消生成'}
+                >
+                  <TrashIcon className="h-4 w-4" />
+                  {detailTask.status === 'completed' || detailTask.status === 'failed' ? '删除任务' : '取消生成'}
+                </button>
+              </div>
+            </aside>
+          </section>
+        </div>
+      )}
 
       {/* Bottom input bar */}
       <div className="fixed inset-x-0 bottom-0 z-20 px-3 pb-4 sm:px-4">
