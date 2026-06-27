@@ -188,6 +188,11 @@ function normalizeStatus(raw: string): VideoStatus {
   return 'processing'
 }
 
+function isRetryablePollError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err || '')
+  return /(?:\b(?:408|409|425|429|500|502|503|504|524)\b|timeout|timed?\s*out|temporarily|overloaded|rate\s*limit|try\s*again|retry)/i.test(message)
+}
+
 export interface CreateVideoResult {
   id: string
 }
@@ -287,7 +292,15 @@ export async function pollVideo(id: string, cb: PollVideoCallbacks = {}): Promis
     if (cb.signal?.aborted) throw new DOMException('aborted', 'AbortError')
     if (Date.now() - started > POLL_TIMEOUT_MS) throw new Error('视频生成超时')
 
-    const payload = await fetchStatusOnce(id, cb.signal)
+    let payload: unknown
+    try {
+      payload = await fetchStatusOnce(id, cb.signal)
+    } catch (err) {
+      if (!isRetryablePollError(err)) throw err
+      cb.onStatus?.('processing')
+      await delay(POLL_INTERVAL_MS, cb.signal)
+      continue
+    }
     attempts += 1
     const status = normalizeStatus(readStatus(payload))
     if (status !== lastStatus) {
@@ -331,12 +344,18 @@ async function readError(resp: Response): Promise<string> {
         if (/invalid api platform:\s*48/i.test(msg)) {
           return 'New API 的 xAI/Grok 官方渠道暂不支持 /v1/videos。请在中转里把 grok-video 改为指向 grok2api 的 OpenAI 兼容渠道。'
         }
+        if (resp.status === 524 || /524|timeout|timed?\s*out|proxy\s+read\s+timeout/i.test(msg)) {
+          return `HTTP ${resp.status}: 视频接口响应超时，正在等待服务商生成结果`
+        }
         return msg
       }
     } catch {
       // not JSON
     }
-    return text || `HTTP ${resp.status}`
+    if (resp.status === 524 || /524|timeout|timed?\s*out|proxy\s+read\s+timeout/i.test(text)) {
+      return `HTTP ${resp.status}: 视频接口响应超时，正在等待服务商生成结果`
+    }
+    return text ? `HTTP ${resp.status}: ${text}` : `HTTP ${resp.status}`
   } catch {
     return `HTTP ${resp.status}`
   }

@@ -66,6 +66,23 @@ function formatTime(ts: number) {
   })
 }
 
+function summarizeVideoError(error?: string) {
+  const message = (error || '').trim()
+  if (!message) return '视频生成失败'
+  if (/524|timeout|timed?\s*out|proxy\s+read\s+timeout/i.test(message)) {
+    return '视频接口响应超时，已停止本次任务。可复用配置后重试。'
+  }
+  if (/invalid api platform:\s*48/i.test(message)) return '当前视频模型通道不支持 /v1/videos，请切到 grok2api 兼容通道。'
+  try {
+    const parsed = JSON.parse(message)
+    const nested = parsed?.message || parsed?.error?.message || parsed?.error || parsed?.detail
+    if (typeof nested === 'string' && nested.trim()) return summarizeVideoError(nested)
+  } catch {
+    // Plain text error.
+  }
+  return message.length > 160 ? `${message.slice(0, 160)}...` : message
+}
+
 export default function VideoWorkspace() {
   const prompt = useVideoStore((s) => s.prompt)
   const setPrompt = useVideoStore((s) => s.setPrompt)
@@ -147,7 +164,7 @@ export default function VideoWorkspace() {
         if ((err as Error)?.name === 'AbortError') return
         const message = err instanceof Error ? err.message : '视频生成失败'
         updateTask(task.localId, { status: 'failed', error: message })
-        showToast(message, 'error')
+        showToast(summarizeVideoError(message), 'error')
       } finally {
         delete abortRef.current[task.localId]
       }
@@ -222,6 +239,15 @@ export default function VideoWorkspace() {
       showToast('提示词已复制', 'success')
     } catch (err) {
       showToast(getClipboardFailureMessage('复制失败', err), 'error')
+    }
+  }, [showToast])
+
+  const copyError = useCallback(async (task: VideoTask) => {
+    try {
+      await copyTextToClipboard(task.error || '视频生成失败')
+      showToast('完整报错已复制', 'success')
+    } catch (err) {
+      showToast(getClipboardFailureMessage('复制报错失败', err), 'error')
     }
   }, [showToast])
 
@@ -415,7 +441,22 @@ export default function VideoWorkspace() {
               {detailTask.status === 'completed' && detailTask.videoUrl ? (
                 <video src={detailTask.videoUrl} controls playsInline className="max-h-[76vh] w-full rounded-lg object-contain" />
               ) : detailTask.status === 'failed' ? (
-                <div className="max-w-md px-6 text-center text-sm text-red-300">{detailTask.error || '视频生成失败'}</div>
+                <div className="flex max-w-md flex-col items-center gap-3 px-6 text-center">
+                  <svg className="h-10 w-10 text-red-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 9v3.75m0 3.75h.008v.008H12v-.008zM10.29 3.86 1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                  </svg>
+                  <p className="text-sm font-semibold text-red-200">{summarizeVideoError(detailTask.error)}</p>
+                  {detailTask.error && (
+                    <button
+                      type="button"
+                      onClick={() => copyError(detailTask)}
+                      className="inline-flex h-9 items-center justify-center gap-1.5 rounded-full bg-red-500/10 px-3 text-xs font-semibold text-red-200 transition hover:bg-red-500/18"
+                    >
+                      <CopyIcon className="h-3.5 w-3.5" />
+                      复制完整报错
+                    </button>
+                  )}
+                </div>
               ) : (
                 <div className="flex flex-col items-center gap-3 text-gray-400">
                   <span className="h-9 w-9 animate-spin rounded-full border-2 border-white/20 border-t-white/80" />
@@ -456,6 +497,27 @@ export default function VideoWorkspace() {
                       alt="参考图"
                       className="h-16 w-16 rounded-lg border border-white/[0.08] object-cover"
                     />
+                  </div>
+                )}
+
+                {detailTask.status === 'failed' && (
+                  <div className="mb-5 rounded-xl border border-red-500/10 bg-red-500/[0.06] p-3">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <h3 className="text-xs font-medium uppercase tracking-wider text-red-300">错误信息</h3>
+                      {detailTask.error && (
+                        <button
+                          type="button"
+                          onClick={() => copyError(detailTask)}
+                          className="rounded-md p-1 text-red-200/80 transition hover:bg-red-500/10 hover:text-red-100"
+                          title="复制完整报错"
+                        >
+                          <CopyIcon className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+                    <p className="break-words text-xs leading-relaxed text-red-100/80">
+                      {summarizeVideoError(detailTask.error)}
+                    </p>
                   </div>
                 )}
 
