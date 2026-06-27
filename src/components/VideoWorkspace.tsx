@@ -1,16 +1,143 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../store'
 import { useVideoStore, type VideoTask } from '../videoStore'
-import { createVideo, pollVideo, VIDEO_DURATIONS, VIDEO_ASPECTS, VIDEO_SIZES, type VideoMode } from '../lib/videoApi'
+import { createVideo, fetchVideoContentObjectUrl, pollVideo, VIDEO_DURATIONS, VIDEO_ASPECTS, VIDEO_SIZES, type VideoMode } from '../lib/videoApi'
 import { getPlaygroundApiChannelTarget, setPlaygroundApiChannelTarget } from '../lib/devProxy'
 import { fileToDataUrl } from '../lib/dataUrl'
-import { getAtImageQuery, getImageMentionLabel, replaceImageMentionsForApi, stripImageMentionMarkers } from '../lib/promptImageMentions'
+import { getAtImageQuery, getImageMentionLabel, getPromptMentionParts, getSelectedImageMentionLabel, insertImageMentionAtVisibleRange, replaceImageMentionsForApi, stripImageMentionMarkers } from '../lib/promptImageMentions'
 import { copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
+import type { InputImage } from '../types'
 import ModelSelect from './ModelSelect'
 import { CloseIcon, CodeIcon, CopyIcon, DownloadIcon, RefreshIcon, TrashIcon } from './icons'
 
 function genLocalId(): string {
   return `v_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+}
+
+function getMentionTagTextLength(el: Element) {
+  return el.textContent?.length ?? 0
+}
+
+function getNodeVisibleTextLength(node: Node): number {
+  if (node.nodeType === Node.TEXT_NODE) return node.textContent?.length ?? 0
+  if (node instanceof HTMLElement && node.classList.contains('mention-tag')) return getMentionTagTextLength(node)
+  return Array.from(node.childNodes).reduce((sum, child) => sum + getNodeVisibleTextLength(child), 0)
+}
+
+function getVisibleOffsetBeforeNode(root: HTMLElement, target: Node): number {
+  let offset = 0
+  let found = false
+  const walk = (node: Node) => {
+    if (found) return
+    if (node === target) {
+      found = true
+      return
+    }
+    if (node.nodeType === Node.TEXT_NODE) {
+      offset += node.textContent?.length ?? 0
+      return
+    }
+    if (node instanceof HTMLElement && node.classList.contains('mention-tag')) {
+      offset += getMentionTagTextLength(node)
+      return
+    }
+    node.childNodes.forEach(walk)
+  }
+  root.childNodes.forEach(walk)
+  return offset
+}
+
+function getContentEditableCursor(el: HTMLElement): number {
+  const sel = window.getSelection()
+  if (!sel || sel.rangeCount === 0) return el.textContent?.length ?? 0
+  try {
+    const range = sel.getRangeAt(0)
+    if (!el.contains(range.startContainer)) return el.textContent?.length ?? 0
+    if (range.startContainer === el) {
+      return Array.from(el.childNodes)
+        .slice(0, range.startOffset)
+        .reduce((sum, child) => sum + getNodeVisibleTextLength(child), 0)
+    }
+    if (range.startContainer.nodeType === Node.TEXT_NODE) {
+      return getVisibleOffsetBeforeNode(el, range.startContainer) + range.startOffset
+    }
+    const element = range.startContainer as Element
+    const tag = element.closest?.('.mention-tag')
+    if (tag && el.contains(tag)) return getVisibleOffsetBeforeNode(el, tag) + getMentionTagTextLength(tag)
+    return getVisibleOffsetBeforeNode(el, element)
+  } catch {
+    return el.textContent?.length ?? 0
+  }
+}
+
+function getContentEditablePlainText(el: HTMLElement): string {
+  let text = ''
+  const appendNodeText = (node: Node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      text += node.textContent ?? ''
+      return
+    }
+    if (node instanceof HTMLElement && node.classList.contains('mention-tag')) {
+      text += node.dataset.mentionText ?? node.textContent ?? ''
+      return
+    }
+    node.childNodes.forEach(appendNodeText)
+  }
+  el.childNodes.forEach(appendNodeText)
+  return text.replace(/\r\n?/g, '\n')
+}
+
+function setContentEditableCursor(el: HTMLElement, offset: number) {
+  const sel = window.getSelection()
+  if (!sel) return
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+  let remaining = offset
+  let node: Text | null = null
+  while (walker.nextNode()) {
+    node = walker.currentNode as Text
+    const mentionTag = node.parentElement?.closest('.mention-tag')
+    if (mentionTag) {
+      if (remaining <= node.length) {
+        const range = document.createRange()
+        range.setStartAfter(mentionTag)
+        range.collapse(true)
+        sel.removeAllRanges()
+        sel.addRange(range)
+        return
+      }
+      remaining -= node.length
+      continue
+    }
+    if (remaining <= node.length) {
+      const range = document.createRange()
+      range.setStart(node, remaining)
+      range.collapse(true)
+      sel.removeAllRanges()
+      sel.addRange(range)
+      return
+    }
+    remaining -= node.length
+  }
+  const range = document.createRange()
+  range.selectNodeContents(el)
+  range.collapse(false)
+  sel.removeAllRanges()
+  sel.addRange(range)
+}
+
+function escapeHtml(text: string) {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+function getVideoPromptHtml(prompt: string, inputImages: InputImage[]) {
+  if (!prompt) return ''
+  return getPromptMentionParts(prompt, inputImages)
+    .map((part) =>
+      part.type === 'mention'
+        ? `<span contenteditable="false" class="mention-tag" data-mention-text="${part.mentionText ?? getSelectedImageMentionLabel(part.imageIndex ?? 0)}">${escapeHtml(part.text)}</span>`
+        : escapeHtml(part.text),
+    )
+    .join('')
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -41,6 +168,14 @@ function getVideoModeLabel(mode: VideoMode) {
   return '图文生视频'
 }
 
+function getVideoModeForInput(prompt: string, hasReference: boolean): VideoMode {
+  if (!hasReference) return 'text'
+  const semanticPrompt = stripImageMentionMarkers(prompt)
+    .replace(/@图\d+/g, '')
+    .trim()
+  return semanticPrompt ? 'image_text' : 'image'
+}
+
 function getVideoStatusFilter(task: VideoTask): VideoStatusFilter {
   if (task.status === 'queued' || task.status === 'processing') return 'running'
   return task.status
@@ -54,6 +189,13 @@ function getVideoAspectLabel(task: VideoTask) {
 
 function getVideoDisplaySize(task: VideoTask) {
   return task.size && task.size !== '自动' ? task.size : '自动'
+}
+
+function getVideoPreviewClass(task: VideoTask) {
+  const aspect = getVideoAspectLabel(task)
+  if (aspect === '16:9') return 'aspect-video w-full max-w-[860px]'
+  if (aspect === '1:1') return 'aspect-square h-[min(70vh,680px)] max-h-full max-w-full'
+  return 'aspect-[9/16] h-[min(76vh,720px)] max-h-full max-w-full'
 }
 
 function formatTime(ts: number) {
@@ -96,19 +238,30 @@ export default function VideoWorkspace() {
   const setShowPromptLibrary = useStore((s) => s.setShowPromptLibrary)
   const abortRef = useRef<Record<string, AbortController>>({})
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const promptInputRef = useRef<HTMLTextAreaElement>(null)
+  const promptInputRef = useRef<HTMLDivElement>(null)
+  const isUserInputRef = useRef(false)
   const [cursorPos, setCursorPos] = useState(0)
   const [atMenuDismissed, setAtMenuDismissed] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<VideoStatusFilter>('all')
   const [detailTaskId, setDetailTaskId] = useState<string | null>(null)
+  const [videoLoadErrors, setVideoLoadErrors] = useState<Record<string, string>>({})
 
+  const visiblePrompt = useMemo(() => stripImageMentionMarkers(prompt), [prompt])
+  const videoPromptImages = useMemo<InputImage[]>(
+    () => params.referenceImageDataUrl ? [{ id: 'video-reference-1', dataUrl: params.referenceImageDataUrl }] : [],
+    [params.referenceImageDataUrl],
+  )
   const atImageQuery = params.referenceImageDataUrl && !atMenuDismissed
-    ? getAtImageQuery(prompt, cursorPos, { length: 1 })
+    ? getAtImageQuery(visiblePrompt, cursorPos, { length: 1 })
     : null
   const showAtImageMenu = Boolean(atImageQuery)
   const selectedPrompt = useMemo(
     () => formatVideoPromptForApi(prompt, Boolean(params.referenceImageDataUrl)),
+    [params.referenceImageDataUrl, prompt],
+  )
+  const draftMode = useMemo(
+    () => getVideoModeForInput(prompt, Boolean(params.referenceImageDataUrl)),
     [params.referenceImageDataUrl, prompt],
   )
   const filteredTasks = useMemo(() => {
@@ -136,6 +289,17 @@ export default function VideoWorkspace() {
   useEffect(() => {
     if (detailTaskId && !detailTask) setDetailTaskId(null)
   }, [detailTask, detailTaskId])
+
+  useEffect(() => {
+    const el = promptInputRef.current
+    if (!el) return
+    if (isUserInputRef.current) {
+      isUserInputRef.current = false
+      return
+    }
+    const html = getVideoPromptHtml(prompt, videoPromptImages)
+    if (el.innerHTML !== html) el.innerHTML = html
+  }, [prompt, videoPromptImages])
 
   const runTask = useCallback(
     async (task: VideoTask) => {
@@ -178,8 +342,7 @@ export default function VideoWorkspace() {
       showToast('请先输入描述或上传参考图', 'info')
       return
     }
-    // 模式按是否有参考图自动判定（与图生图一致）：有图=图文生，无图=文生。
-    const mode: VideoMode = params.referenceImageDataUrl ? 'image_text' : 'text'
+    const mode = getVideoModeForInput(text, Boolean(params.referenceImageDataUrl))
     const taskPrompt = text || '请根据参考图生成自然动态视频'
     const task: VideoTask = {
       id: '',
@@ -217,21 +380,19 @@ export default function VideoWorkspace() {
   )
 
   const selectReferenceMention = useCallback(() => {
-    const query = getAtImageQuery(prompt, cursorPos, { length: 1 })
+    const query = getAtImageQuery(visiblePrompt, cursorPos, { length: 1 })
     if (!query) return
-    const mention = getImageMentionLabel(0)
-    const nextPrompt = `${prompt.slice(0, query.start)}${mention}${prompt.slice(cursorPos)}`
-    const nextCursor = query.start + mention.length
-    setPrompt(nextPrompt)
+    const inserted = insertImageMentionAtVisibleRange(prompt, query.start, cursorPos, 0)
+    setPrompt(inserted.prompt)
     setAtMenuDismissed(true)
     window.setTimeout(() => {
       const el = promptInputRef.current
       if (!el) return
       el.focus()
-      el.setSelectionRange(nextCursor, nextCursor)
-      setCursorPos(nextCursor)
+      setContentEditableCursor(el, inserted.cursor)
+      setCursorPos(inserted.cursor)
     }, 0)
-  }, [cursorPos, prompt, setPrompt])
+  }, [cursorPos, prompt, setPrompt, visiblePrompt])
 
   const copyPrompt = useCallback(async (task: VideoTask) => {
     try {
@@ -264,6 +425,23 @@ export default function VideoWorkspace() {
     setDetailTaskId(null)
     showToast('已复用配置到输入框', 'success')
   }, [setParams, setPrompt, showToast])
+
+  const handleVideoPlaybackError = useCallback(async (task: VideoTask) => {
+    if (!task.id || videoLoadErrors[task.localId]) return
+    setVideoLoadErrors((prev) => ({ ...prev, [task.localId]: '正在重新拉取视频文件…' }))
+    try {
+      const videoUrl = await fetchVideoContentObjectUrl(task.id)
+      updateTask(task.localId, { videoUrl })
+      setVideoLoadErrors((prev) => {
+        const next = { ...prev }
+        delete next[task.localId]
+        return next
+      })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '视频加载失败'
+      setVideoLoadErrors((prev) => ({ ...prev, [task.localId]: summarizeVideoError(message) }))
+    }
+  }, [updateTask, videoLoadErrors])
 
   return (
     <>
@@ -307,7 +485,7 @@ export default function VideoWorkspace() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
               </svg>
               <p>输入提示词开始生成视频</p>
-              <p className="mt-1 text-xs text-gray-600">文生视频；上传参考图即图生视频</p>
+              <p className="mt-1 text-xs text-gray-600">文生视频；上传参考图可图生/图文生视频</p>
             </div>
           ) : filteredTasks.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-24 text-center text-gray-500">
@@ -439,7 +617,22 @@ export default function VideoWorkspace() {
                 <CloseIcon className="h-5 w-5" />
               </button>
               {detailTask.status === 'completed' && detailTask.videoUrl ? (
-                <video src={detailTask.videoUrl} controls playsInline className="max-h-[76vh] w-full rounded-lg object-contain" />
+                <div className={`relative overflow-hidden rounded-xl bg-black shadow-2xl ${getVideoPreviewClass(detailTask)}`}>
+                  <video
+                    key={detailTask.videoUrl}
+                    src={detailTask.videoUrl}
+                    controls
+                    playsInline
+                    preload="metadata"
+                    className="h-full w-full object-contain"
+                    onError={() => void handleVideoPlaybackError(detailTask)}
+                  />
+                  {videoLoadErrors[detailTask.localId] && (
+                    <div className="absolute inset-x-3 bottom-3 rounded-lg bg-black/75 px-3 py-2 text-center text-xs text-white/85 backdrop-blur">
+                      {videoLoadErrors[detailTask.localId]}
+                    </div>
+                  )}
+                </div>
               ) : detailTask.status === 'failed' ? (
                 <div className="flex max-w-md flex-col items-center gap-3 px-6 text-center">
                   <svg className="h-10 w-10 text-red-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -636,7 +829,7 @@ export default function VideoWorkspace() {
                   ×
                 </button>
               </div>
-              <span className="text-[11px] text-gray-400">已添加参考图 · 将按「图生视频」生成</span>
+              <span className="text-[11px] text-gray-400">已添加参考图 · 将按「{getVideoModeLabel(draftMode)}」生成</span>
             </div>
           )}
           <div className="relative">
@@ -658,19 +851,33 @@ export default function VideoWorkspace() {
                 </button>
               </div>
             )}
-            <textarea
+            <div
               ref={promptInputRef}
-              value={prompt}
-              onChange={(e) => {
-                setPrompt(e.target.value)
-                setCursorPos(e.target.selectionStart)
+              role="textbox"
+              aria-multiline="true"
+              contentEditable
+              suppressContentEditableWarning
+              data-placeholder={params.referenceImageDataUrl ? '可选：描述参考图如何动起来，输入 @ 可引用参考图…' : '描述你想生成的视频，Ctrl + Enter 发送…'}
+              onInput={(e) => {
+                const el = e.currentTarget
+                isUserInputRef.current = true
+                setPrompt(getContentEditablePlainText(el))
+                setCursorPos(getContentEditableCursor(el))
                 setAtMenuDismissed(false)
               }}
-              onSelect={(e) => {
-                setCursorPos(e.currentTarget.selectionStart)
+              onMouseUp={(e) => {
+                setCursorPos(getContentEditableCursor(e.currentTarget))
                 setAtMenuDismissed(false)
               }}
-              onBlur={(e) => setCursorPos(e.currentTarget.selectionStart)}
+              onKeyUp={(e) => {
+                setCursorPos(getContentEditableCursor(e.currentTarget))
+                setAtMenuDismissed(false)
+              }}
+              onBlur={(e) => setCursorPos(getContentEditableCursor(e.currentTarget))}
+              onPaste={(e) => {
+                e.preventDefault()
+                document.execCommand('insertText', false, e.clipboardData.getData('text/plain'))
+              }}
               onKeyDown={(e) => {
                 if (showAtImageMenu && (e.key === 'Enter' || e.key === 'Tab')) {
                   e.preventDefault()
@@ -683,9 +890,7 @@ export default function VideoWorkspace() {
                 }
                 if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') submit()
               }}
-              rows={4}
-              placeholder={params.referenceImageDataUrl ? '可选：描述参考图如何动起来，输入 @ 可引用参考图…' : '描述你想生成的视频，Ctrl + Enter 发送…'}
-              className="min-h-[104px] w-full resize-y bg-transparent px-2 py-1.5 text-sm leading-relaxed text-gray-100 outline-none placeholder:text-gray-500"
+              className="video-prompt-editor min-h-[104px] max-h-[220px] w-full overflow-y-auto whitespace-pre-wrap break-words bg-transparent px-2 py-1.5 text-sm leading-relaxed text-gray-100 outline-none custom-scrollbar"
             />
           </div>
           {params.referenceImageDataUrl && selectedPrompt !== prompt && (
@@ -756,7 +961,7 @@ export default function VideoWorkspace() {
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              title="上传参考图（图生视频）"
+              title="上传参考图（图生/图文生视频）"
               aria-label="上传参考图"
               className="ml-auto flex h-9 w-9 items-center justify-center rounded-full border border-white/[0.08] bg-white/[0.04] text-gray-300 transition hover:bg-white/[0.08] hover:text-white"
             >

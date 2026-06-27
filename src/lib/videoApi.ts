@@ -262,7 +262,7 @@ async function fetchStatusOnce(id: string, signal?: AbortSignal): Promise<unknow
 }
 
 // Fetch the video file via /content as a blob and return an object URL.
-async function fetchContentObjectUrl(id: string, signal?: AbortSignal): Promise<string> {
+export async function fetchVideoContentObjectUrl(id: string, signal?: AbortSignal): Promise<string> {
   const profile = getActiveProfile()
   const proxyConfig = readClientDevProxyConfig()
   const useApiProxy = shouldUseApiProxy(profile.apiProxy, proxyConfig)
@@ -309,13 +309,17 @@ export async function pollVideo(id: string, cb: PollVideoCallbacks = {}): Promis
     }
     if (status === 'failed') throw new Error('视频生成失败')
     if (status === 'completed') {
-      const direct = readVideoUrl(payload)
-      if (direct) return direct
-      return fetchContentObjectUrl(id, cb.signal)
+      try {
+        return await fetchVideoContentObjectUrl(id, cb.signal)
+      } catch (err) {
+        const direct = readVideoUrl(payload)
+        if (direct) return direct
+        throw err
+      }
     }
     if (attempts >= 3) {
       try {
-        return await fetchContentObjectUrl(id, cb.signal)
+        return await fetchVideoContentObjectUrl(id, cb.signal)
       } catch {
         // The content endpoint often returns 404/409 before completion; keep polling.
       }

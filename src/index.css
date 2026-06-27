@@ -529,6 +529,12 @@ input[type="number"] {
   box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.25);
 }
 
+.video-prompt-editor:empty::before {
+  content: attr(data-placeholder);
+  color: #6b7280;
+  pointer-events: none;
+}
+
 @media (prefers-color-scheme: dark) {
   .mention-tag {
     background: rgba(59, 130, 246, 0.12);
