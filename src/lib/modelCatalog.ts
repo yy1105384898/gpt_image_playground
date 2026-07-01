@@ -6,11 +6,15 @@ import { useEffect, useState } from 'react'
 import { useStore } from '../store'
 import {
   buildApiUrl,
-  PLAYGROUND_API_CHANNELS,
   readClientDevProxyConfig,
   shouldUseApiProxy,
   type PlaygroundApiPurpose,
 } from './devProxy'
+import {
+  findPlaygroundModelChannelByTarget,
+  getPlaygroundModelChannelTarget,
+  getPlaygroundModelChannels,
+} from './playgroundChannels'
 import { getStoredPlaygroundPurposeConfig } from './playgroundPurposeConfig'
 import { getTokenVaultItems } from './tokenVault'
 
@@ -127,6 +131,8 @@ function profileForPurpose(purpose: PlaygroundApiPurpose) {
 }
 
 function tokenForTargetPurpose(target: string, purpose: PlaygroundApiPurpose): string {
+  const channel = findPlaygroundModelChannelByTarget(target)
+  if (channel?.apiKey.trim()) return channel.apiKey
   const stored = getStoredPlaygroundPurposeConfig(target, purpose)
   if (stored.apiKey?.trim()) return stored.apiKey
   const items = getTokenVaultItems(target)
@@ -196,6 +202,8 @@ async function fetchChannelModels(target: string, purpose: PlaygroundApiPurpose)
 
 export async function getChannelModels(target: string, purpose: PlaygroundApiPurpose, force = false): Promise<string[]> {
   const key = selectedModelsKey(target, purpose)
+  const channel = findPlaygroundModelChannelByTarget(target)
+  if (!force && channel?.models.length) return channel.models
   if (!force && channelModelCache.has(key)) return channelModelCache.get(key)!
   if (!force) {
     const stored = readStoredChannelModels(key)
@@ -222,21 +230,28 @@ export async function getChannelModels(target: string, purpose: PlaygroundApiPur
 const cache = new Map<PlaygroundApiPurpose, ModelGroup[]>()
 const inflight = new Map<PlaygroundApiPurpose, Promise<ModelGroup[]>>()
 
+export function invalidateModelCatalogCache() {
+  cache.clear()
+  inflight.clear()
+}
+
 export async function getModelGroups(purpose: PlaygroundApiPurpose, force = false): Promise<ModelGroup[]> {
   if (!force && cache.has(purpose)) return cache.get(purpose)!
   if (!force && inflight.has(purpose)) return inflight.get(purpose)!
   const task = (async () => {
+    const channels = getPlaygroundModelChannels()
     const results = await Promise.all(
-      PLAYGROUND_API_CHANNELS.map(async (channel) => {
+      channels.map(async (channel) => {
+        const target = getPlaygroundModelChannelTarget(channel)
         try {
-          const allModels = await getChannelModels(channel.target, purpose, force)
-          const selected = getSelectedModels(channel.target, purpose)
-          const allowed = hasSelectedModelsConfig(channel.target, purpose)
+          const allModels = await getChannelModels(target, purpose, force)
+          const selected = getSelectedModels(target, purpose)
+          const allowed = hasSelectedModelsConfig(target, purpose)
             ? allModels.filter((id) => selected.includes(id))
             : allModels.filter((id) => isModelForPurpose(id, purpose))
-          return { id: channel.id, label: channel.label, target: channel.target, models: allowed }
+          return { id: channel.id, label: channel.name, target, models: allowed }
         } catch {
-          return { id: channel.id, label: channel.label, target: channel.target, models: [] }
+          return { id: channel.id, label: channel.name, target, models: [] }
         }
       }),
     )

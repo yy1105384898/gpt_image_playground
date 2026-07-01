@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { normalizeBaseUrl } from '../lib/api'
-import { getPlaygroundApiChannelTarget, isApiProxyAvailable, isApiProxyLocked, PLAYGROUND_API_CHANNELS, readClientDevProxyConfig, setPlaygroundApiChannelTarget, type PlaygroundApiPurpose } from '../lib/devProxy'
+import { getPlaygroundApiChannelTarget, isApiProxyAvailable, isApiProxyLocked, readClientDevProxyConfig, setPlaygroundApiChannelTarget, type PlaygroundApiPurpose } from '../lib/devProxy'
 import { useStore, exportData, importData, clearData, type SettingsTab } from '../store'
 import {
   createDefaultOpenAIProfile,
@@ -32,12 +32,20 @@ import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_STREAM_PARTIAL_IMAGES, type Agen
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { DEFAULT_DROPDOWN_MAX_HEIGHT, getDropdownMaxHeight } from '../lib/dropdown'
-import { getChannelModels, getDefaultSelectedModels, getSelectedModels, setSelectedModels } from '../lib/modelCatalog'
+import { getChannelModels, getDefaultSelectedModels, getSelectedModels, invalidateModelCatalogCache, isModelForPurpose, setSelectedModels } from '../lib/modelCatalog'
 import { getStoredPlaygroundPurposeConfig, savePlaygroundPurposeConfig } from '../lib/playgroundPurposeConfig'
+import {
+  createPlaygroundModelChannel,
+  getPlaygroundModelChannelTarget,
+  getPlaygroundModelChannels,
+  savePlaygroundModelChannels,
+  type PlaygroundApiFormat,
+  type PlaygroundModelChannel,
+} from '../lib/playgroundChannels'
 import Select from './Select'
 import { Checkbox } from './Checkbox'
 import ViewportTooltip from './ViewportTooltip'
-import { ChevronDownIcon, CloseIcon, CopyIcon, PlusIcon, TrashIcon, GithubIcon, ExportIcon, ImportIcon, DragHandleIcon, LinkIcon } from './icons'
+import { ChevronDownIcon, CloseIcon, CopyIcon, PlusIcon, TrashIcon, GithubIcon, ExportIcon, ImportIcon, DragHandleIcon, LinkIcon, RefreshIcon } from './icons'
 import GeneralSettingsTab from './settings/GeneralSettingsTab'
 import AgentSettingsTab from './settings/AgentSettingsTab'
 
@@ -77,6 +85,25 @@ const SIMPLIFIED_PROFILE_IDS_BY_PURPOSE: Record<PlaygroundApiPurpose, string> = 
   image: SIMPLIFIED_IMAGE_PROFILE_ID,
   video: SIMPLIFIED_VIDEO_PROFILE_ID,
 }
+
+const MODEL_CONFIG_GROUPS: Array<{
+  purpose: PlaygroundApiPurpose
+  label: string
+  optionsLabel: string
+  defaultLabel: string
+  badge: string
+}> = [
+  { purpose: 'image', label: '生图', optionsLabel: '生图模型可选项', defaultLabel: '默认生图模型', badge: 'Images' },
+  { purpose: 'video', label: '视频', optionsLabel: '视频模型可选项', defaultLabel: '默认视频模型', badge: 'Videos' },
+  { purpose: 'text', label: '对话', optionsLabel: '文本模型可选项', defaultLabel: '默认文本模型', badge: 'Responses' },
+]
+
+const API_FORMAT_OPTIONS: Array<{ label: string; value: PlaygroundApiFormat }> = [
+  { label: 'OpenAI', value: 'openai' },
+  { label: 'Gemini', value: 'gemini' },
+]
+
+const MODEL_OPTION_SEPARATOR = '::yy-model::'
 
 type CopyImportUrlOptions = typeof DEFAULT_COPY_IMPORT_URL_OPTIONS
 
@@ -395,7 +422,10 @@ export default function SettingsModal() {
   const [duplicateProfileTooltipVisible, setDuplicateProfileTooltipVisible] = useState(false)
   const [llmPromptTooltipVisible, setLlmPromptTooltipVisible] = useState(false)
   const [activeTab, setActiveTab] = useState<SettingsTab>('api')
-  const [apiPurposeTab, setApiPurposeTab] = useState<PlaygroundApiPurpose>('image')
+  const [apiConfigTab, setApiConfigTab] = useState<'channels' | 'models'>('channels')
+  const [modelChannels, setModelChannels] = useState<PlaygroundModelChannel[]>(getPlaygroundModelChannels)
+  const [channelModelInputs, setChannelModelInputs] = useState<Record<string, string>>({})
+  const [loadingChannelId, setLoadingChannelId] = useState<string>('')
   const [apiChannelTargets, setApiChannelTargets] = useState(() => ({
     text: getPlaygroundApiChannelTarget('text'),
     image: getPlaygroundApiChannelTarget('image'),
@@ -430,7 +460,7 @@ export default function SettingsModal() {
   const apiProxyAvailable = isApiProxyAvailable(apiProxyConfig)
   const apiProxyLocked = isApiProxyLocked(apiProxyConfig)
   const defaultConfigOnly = isDefaultConfigOnlyEnabled()
-  const playgroundManagedApiSettings = PLAYGROUND_API_CHANNELS.length > 0
+  const playgroundManagedApiSettings = modelChannels.length > 0
   const ensureSimplifiedProfiles = useCallback((source: AppSettings): AppSettings => {
     const normalized = normalizeSettings(source)
     const previousTextProfile = normalized.profiles.find((profile) => profile.id === SIMPLIFIED_TEXT_PROFILE_ID)
@@ -513,18 +543,47 @@ export default function SettingsModal() {
   const simplifiedTextProfile = simplifiedSettings.profiles.find((profile) => profile.id === SIMPLIFIED_TEXT_PROFILE_ID) ?? null
   const simplifiedImageProfile = simplifiedSettings.profiles.find((profile) => profile.id === SIMPLIFIED_IMAGE_PROFILE_ID) ?? activeProfile
   const simplifiedVideoProfile = simplifiedSettings.profiles.find((profile) => profile.id === SIMPLIFIED_VIDEO_PROFILE_ID) ?? null
+  const profileByPurpose: Record<PlaygroundApiPurpose, ApiProfile | null> = {
+    text: simplifiedTextProfile,
+    image: simplifiedImageProfile,
+    video: simplifiedVideoProfile,
+  }
   const selectedApiChannelTarget = apiChannelTargets.image || getPlaygroundApiChannelTarget('image')
+  const channelTarget = (channel: PlaygroundModelChannel) => getPlaygroundModelChannelTarget(channel)
   const getPurposeChannelTarget = (purpose: PlaygroundApiPurpose) => apiChannelTargets[purpose] || getPlaygroundApiChannelTarget(purpose)
   const getPurposeModelPickerKey = (purpose: PlaygroundApiPurpose) => `${purpose}:${getPurposeChannelTarget(purpose)}`
-  const getPurposeSelectedModels = (purpose: PlaygroundApiPurpose) => getSelectedModels(getPurposeChannelTarget(purpose), purpose)
-  const getPurposeDefaultModelOptions = (purpose: PlaygroundApiPurpose, model: string) => {
-    const pickerModels = modelPickerState[getPurposeModelPickerKey(purpose)]?.models ?? []
-    const selectedModels = getPurposeSelectedModels(purpose)
+  const getPurposeSelectedModels = (purpose: PlaygroundApiPurpose, target = getPurposeChannelTarget(purpose)) => getSelectedModels(target, purpose)
+  const getPurposeAllModels = (purpose: PlaygroundApiPurpose, model = '') => {
+    const models = modelChannels.flatMap((channel) => {
+      const target = channelTarget(channel)
+      const pickerModels = modelPickerState[`${purpose}:${target}`]?.models ?? []
+      return [...channel.models, ...pickerModels]
+    })
     return uniqueModelOptions([
-      ...(selectedModels.length ? selectedModels : pickerModels),
+      ...models,
       model,
       DEFAULT_SIMPLIFIED_MODELS[purpose],
     ])
+  }
+  const getPurposeModelOptions = (purpose: PlaygroundApiPurpose, model: string, target = getPurposeChannelTarget(purpose)) => {
+    const pickerModels = modelPickerState[`${purpose}:${target}`]?.models ?? []
+    const selectedModels = getPurposeSelectedModels(purpose, target)
+    return uniqueModelOptions([
+      ...pickerModels,
+      ...selectedModels,
+      ...(modelChannels.find((channel) => channelTarget(channel) === target)?.models ?? []),
+      model,
+      DEFAULT_SIMPLIFIED_MODELS[purpose],
+    ])
+  }
+  const getPurposeDefaultModelOptions = (purpose: PlaygroundApiPurpose, model: string) => {
+    const selectedModels = getPurposeSelectedModels(purpose)
+    return uniqueModelOptions(selectedModels.length ? selectedModels : [model, DEFAULT_SIMPLIFIED_MODELS[purpose]])
+  }
+  const getPurposeEffectiveDefaultModel = (purpose: PlaygroundApiPurpose, model: string) => {
+    const selectedModels = getPurposeSelectedModels(purpose)
+    if (!selectedModels.length || selectedModels.includes(model)) return model || DEFAULT_SIMPLIFIED_MODELS[purpose]
+    return selectedModels[0]
   }
   const defaultProviderOrder = ['openai', 'fal', ...draft.customProviders.map(p => p.id)]
   const providerOrder = draft.providerOrder || defaultProviderOrder
@@ -839,7 +898,7 @@ export default function SettingsModal() {
   const updateSimplifiedProfile = (profileId: string, patch: Partial<ApiProfile>, commit = false) => {
     const baseDraft = ensureSimplifiedProfiles(draft)
     const purpose = SIMPLIFIED_PROFILE_PURPOSES[profileId]
-    const target = purpose ? getPurposeChannelTarget(purpose) : selectedApiChannelTarget
+    const target = purpose ? (patch.baseUrl?.trim() || getPurposeChannelTarget(purpose)) : selectedApiChannelTarget
     if (purpose) {
       saveStoredPurposeConfig(target, purpose, {
         apiKey: patch.apiKey,
@@ -886,6 +945,126 @@ export default function SettingsModal() {
     commitSettings(nextDraft)
   }
 
+  const saveChannels = (channels: PlaygroundModelChannel[]) => {
+    const normalizedChannels = channels.length ? channels : [createPlaygroundModelChannel({ name: '默认渠道' })]
+    setModelChannels(normalizedChannels)
+    savePlaygroundModelChannels(normalizedChannels)
+    invalidateModelCatalogCache()
+    setModelPickerVersion((version) => version + 1)
+  }
+
+  const updateChannel = (id: string, patch: Partial<PlaygroundModelChannel>) => {
+    saveChannels(modelChannels.map((channel) => channel.id === id
+      ? {
+          ...channel,
+          ...patch,
+          models: patch.models ? uniqueModelOptions(patch.models) : channel.models,
+        }
+      : channel,
+    ))
+  }
+
+  const updateChannelApiFormat = (channel: PlaygroundModelChannel, apiFormat: PlaygroundApiFormat) => {
+    const defaultByFormat: Record<PlaygroundApiFormat, string> = {
+      openai: 'https://api.openai.com/v1',
+      gemini: 'https://generativelanguage.googleapis.com/v1beta',
+    }
+    const currentDefault = defaultByFormat[channel.apiFormat]
+    updateChannel(channel.id, {
+      apiFormat,
+      baseUrl: !channel.baseUrl.trim() || channel.baseUrl.trim() === currentDefault
+        ? defaultByFormat[apiFormat]
+        : channel.baseUrl,
+    })
+  }
+
+  const addChannel = () => {
+    saveChannels([...modelChannels, createPlaygroundModelChannel({ name: `渠道 ${modelChannels.length + 1}` })])
+  }
+
+  const deleteChannel = (id: string) => {
+    if (modelChannels.length <= 1) {
+      showToast('至少保留一个渠道', 'info')
+      return
+    }
+    saveChannels(modelChannels.filter((channel) => channel.id !== id))
+  }
+
+  const addChannelModel = (channel: PlaygroundModelChannel) => {
+    const value = (channelModelInputs[channel.id] ?? '').trim()
+    if (!value) return
+    updateChannel(channel.id, { models: [...channel.models, value] })
+    setChannelModelInputs((inputs) => ({ ...inputs, [channel.id]: '' }))
+  }
+
+  const removeChannelModel = (channel: PlaygroundModelChannel, model: string) => {
+    updateChannel(channel.id, { models: channel.models.filter((item) => item !== model) })
+  }
+
+  const refreshChannelModels = async (channel: PlaygroundModelChannel) => {
+    const target = channelTarget(channel)
+    if (!target || !channel.apiKey.trim()) {
+      showToast('请先填写该渠道的 Base URL 和 API Key', 'error')
+      return
+    }
+    setLoadingChannelId(channel.id)
+    try {
+      const purposeResults = await Promise.all(MODEL_CONFIG_GROUPS.map(async (group) => {
+        const models = await getChannelModels(target, group.purpose, true)
+        return [group.purpose, models] as const
+      }))
+      const models = uniqueModelOptions(purposeResults.flatMap(([, models]) => models))
+      updateChannel(channel.id, { models })
+      for (const [purpose, purposeModels] of purposeResults) {
+        const selected = getSelectedModels(target, purpose)
+        if (!selected.length) {
+          const suggested = getDefaultSelectedModels(purposeModels, purpose)
+          if (suggested.length) setSelectedModels(target, purpose, suggested)
+        }
+        setModelPickerState((state) => ({ ...state, [`${purpose}:${target}`]: { loading: false, models: purposeModels } }))
+      }
+      showToast(`${channel.name || '渠道'} 模型列表已更新`, 'success')
+    } catch {
+      showToast('模型读取失败', 'error')
+    } finally {
+      setLoadingChannelId('')
+    }
+  }
+
+  const refreshAllChannelModels = async () => {
+    const runnable = modelChannels.filter((channel) => channel.baseUrl.trim() && channel.apiKey.trim())
+    if (!runnable.length) {
+      showToast('请先填写至少一个渠道的 Base URL 和 API Key', 'error')
+      return
+    }
+    setLoadingChannelId('all')
+    try {
+      const entries = await Promise.all(runnable.map(async (channel) => {
+        const target = channelTarget(channel)
+        const purposeResults = await Promise.all(MODEL_CONFIG_GROUPS.map(async (group) => {
+          const models = await getChannelModels(target, group.purpose, true)
+          return [group.purpose, models] as const
+        }))
+        for (const [purpose, purposeModels] of purposeResults) {
+          const selected = getSelectedModels(target, purpose)
+          if (!selected.length) {
+            const suggested = getDefaultSelectedModels(purposeModels, purpose)
+            if (suggested.length) setSelectedModels(target, purpose, suggested)
+          }
+          setModelPickerState((state) => ({ ...state, [`${purpose}:${target}`]: { loading: false, models: purposeModels } }))
+        }
+        return [channel.id, uniqueModelOptions(purposeResults.flatMap(([, models]) => models))] as const
+      }))
+      const modelMap = new Map(entries)
+      saveChannels(modelChannels.map((channel) => modelMap.has(channel.id) ? { ...channel, models: modelMap.get(channel.id) ?? [] } : channel))
+      showToast('模型列表已更新', 'success')
+    } catch {
+      showToast('模型读取失败', 'error')
+    } finally {
+      setLoadingChannelId('')
+    }
+  }
+
   const refreshTokenVault = () => setTokenVaultVersion((version) => version + 1)
 
   const getTokenVaultName = (purpose: PlaygroundApiPurpose) => {
@@ -919,18 +1098,19 @@ export default function SettingsModal() {
     setModelPickerState((state) => ({ ...state, [key]: { loading: true, models: state[key]?.models ?? [] } }))
     void getChannelModels(target, purpose, true)
       .then((models) => {
+        const fetchedModels = uniqueModelOptions(models)
         const selected = getSelectedModels(target, purpose)
-        const actualModelSet = new Set(models)
+        const actualModelSet = new Set(fetchedModels)
         const sanitizedSelected = selected.filter((model) => actualModelSet.has(model))
         if (sanitizedSelected.length !== selected.length) setSelectedModels(target, purpose, sanitizedSelected)
-        const nextSelected = sanitizedSelected.length ? sanitizedSelected : getDefaultSelectedModels(models, purpose)
+        const nextSelected = sanitizedSelected.length ? sanitizedSelected : getDefaultSelectedModels(fetchedModels, purpose)
         if (!sanitizedSelected.length) setSelectedModels(target, purpose, nextSelected)
         const profileId = SIMPLIFIED_PROFILE_IDS_BY_PURPOSE[purpose]
         const currentModel = baseDraftProfileModel(draft, profileId)
         if (nextSelected.length && !nextSelected.includes(currentModel)) {
           updateSimplifiedProfile(profileId, { model: nextSelected[0] }, true)
         }
-        setModelPickerState((state) => ({ ...state, [key]: { loading: false, models } }))
+        setModelPickerState((state) => ({ ...state, [key]: { loading: false, models: fetchedModels } }))
         setModelPickerVersion((version) => version + 1)
         showToast('模型已读取', 'success')
       })
@@ -942,16 +1122,89 @@ export default function SettingsModal() {
 
   const togglePurposeModel = (purpose: PlaygroundApiPurpose, model: string) => {
     const target = getPurposeChannelTarget(purpose)
-    const selected = new Set(getSelectedModels(target, purpose))
-    if (selected.has(model)) selected.delete(model)
-    else selected.add(model)
-    const nextSelected = Array.from(selected)
-    setSelectedModels(target, purpose, nextSelected)
     const profileId = SIMPLIFIED_PROFILE_IDS_BY_PURPOSE[purpose]
     const currentModel = baseDraftProfileModel(draft, profileId)
+    const selected = new Set(getSelectedModels(target, purpose))
+    if (selected.has(model)) {
+      if (selected.size <= 1) {
+        showToast('至少保留一个工作台模型', 'info')
+        return
+      }
+      selected.delete(model)
+    } else {
+      selected.add(model)
+    }
+    const nextSelected = Array.from(selected)
+    setSelectedModels(target, purpose, nextSelected)
     if (nextSelected.length && !nextSelected.includes(currentModel)) {
       updateSimplifiedProfile(profileId, { model: nextSelected[0] }, true)
     }
+    setModelPickerVersion((version) => version + 1)
+  }
+
+  const updatePurposeDefaultModel = (purpose: PlaygroundApiPurpose, profile: ApiProfile, model: string) => {
+    const target = getPurposeChannelTarget(purpose)
+    const selected = getSelectedModels(target, purpose)
+    if (!selected.includes(model)) setSelectedModels(target, purpose, [...selected, model])
+    updateSimplifiedProfile(profile.id, { model }, true)
+    setModelPickerVersion((version) => version + 1)
+  }
+
+  const purposeModelEntries = (purpose: PlaygroundApiPurpose, currentModel = '') => {
+    const entries = modelChannels.flatMap((channel) => {
+      const target = channelTarget(channel)
+      const pickerModels = modelPickerState[`${purpose}:${target}`]?.models ?? []
+      return uniqueModelOptions([...channel.models, ...pickerModels])
+        .filter((model) => model === currentModel || isModelForPurpose(model, purpose) || getSelectedModels(target, purpose).includes(model))
+        .map((model) => ({
+          target,
+          model,
+          label: `${model}（${channel.name || '未命名渠道'}）`,
+        }))
+    })
+    if (currentModel && !entries.some((entry) => entry.target === getPurposeChannelTarget(purpose) && entry.model === currentModel)) {
+      entries.unshift({
+        target: getPurposeChannelTarget(purpose),
+        model: currentModel,
+        label: `${currentModel}（当前默认）`,
+      })
+    }
+    return entries
+  }
+
+  const modelOptionValue = (target: string, model: string) => `${target}${MODEL_OPTION_SEPARATOR}${model}`
+
+  const parseModelOptionValue = (value: string) => {
+    const [target, model] = value.split(MODEL_OPTION_SEPARATOR)
+    return { target, model }
+  }
+
+  const setPurposeModelEnabled = (purpose: PlaygroundApiPurpose, target: string, model: string, enabled: boolean) => {
+    const selected = new Set(getSelectedModels(target, purpose))
+    if (enabled) selected.add(model)
+    else selected.delete(model)
+    setSelectedModels(target, purpose, Array.from(selected))
+    setModelPickerVersion((version) => version + 1)
+  }
+
+  const updatePurposeDefaultModelFromEntry = (purpose: PlaygroundApiPurpose, encoded: string) => {
+    const profile = profileByPurpose[purpose]
+    if (!profile) return
+    const { target, model } = parseModelOptionValue(encoded)
+    if (!target || !model) return
+    setPlaygroundApiChannelTarget(target, purpose)
+    setApiChannelTargets((targets) => ({ ...targets, [purpose]: target }))
+    saveStoredPurposeConfig(target, purpose, {
+      apiKey: modelChannels.find((channel) => channelTarget(channel) === target)?.apiKey ?? profile.apiKey,
+      model,
+    })
+    const selected = getSelectedModels(target, purpose)
+    if (!selected.includes(model)) setSelectedModels(target, purpose, [...selected, model])
+    updateSimplifiedProfile(profile.id, {
+      baseUrl: target,
+      apiKey: modelChannels.find((channel) => channelTarget(channel) === target)?.apiKey ?? profile.apiKey,
+      model,
+    }, true)
     setModelPickerVersion((version) => version + 1)
   }
 
@@ -1447,14 +1700,14 @@ export default function SettingsModal() {
   }
 
   return (
-        <div data-no-drag-select className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+        <div data-no-drag-select className="fixed inset-0 z-[70] flex items-center justify-center p-1.5 sm:p-3">
       <div
         className="absolute inset-0 bg-black/30 backdrop-blur-sm animate-overlay-in"
         onClick={handleClose}
       />
       <div
         ref={settingsScrollBoundaryRef}
-        className="relative z-10 w-full max-w-3xl rounded-3xl border border-white/50 bg-white/95 shadow-2xl ring-1 ring-black/5 animate-modal-in dark:border-white/[0.08] dark:bg-gray-900/95 dark:ring-white/10 flex h-[85vh] sm:h-[600px] flex-col overflow-hidden"
+        className="relative z-10 w-full max-w-[1120px] rounded-3xl border border-white/50 bg-white/95 shadow-2xl ring-1 ring-black/5 animate-modal-in dark:border-white/[0.08] dark:bg-gray-900/95 dark:ring-white/10 flex h-[94vh] sm:h-[820px] flex-col overflow-hidden"
       >
         {/* Header */}
         <div className="flex items-center justify-between shrink-0 p-5 border-b border-gray-100 dark:border-white/[0.08]">
@@ -1563,254 +1816,304 @@ export default function SettingsModal() {
             
             {activeTab === 'api' && (
               simplifiedApiSettings ? (
-              <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
-                <div className="flex items-start justify-between gap-3">
+              <div className="mx-auto flex w-full max-w-none flex-col gap-5">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                   <div>
-                    <h4 className="text-base font-bold text-gray-900 dark:text-gray-50">访问令牌</h4>
+                    <h4 className="text-base font-bold text-gray-900 dark:text-gray-50">配置与用户偏好</h4>
                     <p className="mt-1 text-sm leading-relaxed text-gray-500 dark:text-gray-400">
-                      对话、生图、视频分别选择厂商、令牌和工作台模型。
+                      渠道聚合、模型选择和默认模型同步。
                     </p>
                   </div>
-                  <span className="shrink-0 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
+                  <span className="w-fit shrink-0 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
                     站点代理
                   </span>
                 </div>
 
-                {/* 对话 / 生图 / 视频 子标签：一次只配置一档，避免三张卡堆叠 */}
-                <div className="grid grid-cols-3 gap-1 rounded-xl bg-gray-100/80 p-1 dark:bg-black/20">
-                  {([['text', '对话'], ['image', '生图'], ['video', '视频']] as const).map(([key, label]) => (
+                <div className="grid grid-cols-2 gap-1 rounded-xl bg-gray-100/80 p-1 dark:bg-black/20 sm:w-[320px]">
+                  {([['channels', '渠道'], ['models', '模型']] as const).map(([key, label]) => (
                     <button
                       key={key}
                       type="button"
-                      onClick={() => setApiPurposeTab(key)}
-                      className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${apiPurposeTab === key ? 'bg-white text-blue-600 shadow-sm dark:bg-white/[0.1] dark:text-blue-300' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100'}`}
+                      onClick={() => setApiConfigTab(key)}
+                      className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${apiConfigTab === key ? 'bg-white text-blue-600 shadow-sm dark:bg-white/[0.1] dark:text-blue-300' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100'}`}
                     >
                       {label}
                     </button>
                   ))}
                 </div>
 
-                {([
-                  {
-                    purpose: 'text' as const,
-                    title: '对话模型',
-                    description: '对话页读取文本令牌。',
-                    profile: simplifiedTextProfile,
-                  },
-                  {
-                    purpose: 'image' as const,
-                    title: '生图模型',
-                    description: '图片页读取生图令牌。',
-                    profile: simplifiedImageProfile,
-                  },
-                  {
-                    purpose: 'video' as const,
-                    title: '视频模型',
-                    description: '视频页读取视频令牌。',
-                    profile: simplifiedVideoProfile,
-                  },
-                ]).filter((item) => item.purpose === apiPurposeTab).map(({ purpose, title, description, profile }) => profile ? (
-                  <div key={purpose} className="rounded-2xl border border-gray-200/70 bg-white/85 p-5 shadow-sm dark:border-white/[0.08] dark:bg-white/[0.03]">
-                    <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
-                      <div>
-                        <div className="text-sm font-bold text-gray-900 dark:text-gray-50">{title}</div>
-                        <div data-selectable-text className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">{description}</div>
+                {apiConfigTab === 'channels' && (
+                  <div className="space-y-4">
+                    <div className="flex flex-col gap-3 rounded-2xl border border-gray-200/70 bg-white/70 p-4 dark:border-white/[0.08] dark:bg-white/[0.03] lg:flex-row lg:items-center lg:justify-between">
+                      <div data-selectable-text className="rounded-xl border border-amber-300/70 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+                        <span className="font-semibold">重要：</span>新增或拉取模型后，到“模型”页勾选可选项并设置默认模型。
                       </div>
-                      <span className="w-fit rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-600 dark:bg-white/[0.08] dark:text-gray-300">
-                        {purpose === 'text' ? 'Responses' : purpose === 'video' ? 'Videos' : 'Images'}
-                      </span>
+                      <div className="flex shrink-0 flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void refreshAllChannelModels()}
+                          disabled={loadingChannelId === 'all'}
+                          className="inline-flex items-center gap-2 rounded-xl border border-gray-200/80 bg-white px-3 py-2 text-xs font-semibold text-gray-700 transition hover:bg-gray-100 disabled:cursor-wait disabled:opacity-60 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200 dark:hover:bg-white/[0.08]"
+                        >
+                          <RefreshIcon className={`h-3.5 w-3.5 ${loadingChannelId === 'all' ? 'animate-spin' : ''}`} />
+                          拉取全部
+                        </button>
+                        <button
+                          type="button"
+                          onClick={addChannel}
+                          className="inline-flex items-center gap-2 rounded-xl bg-gray-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-black dark:bg-white dark:text-black dark:hover:bg-gray-200"
+                        >
+                          <PlusIcon className="h-3.5 w-3.5" />
+                          新增渠道
+                        </button>
+                      </div>
                     </div>
 
-                    <div className="space-y-4">
-                      <div>
-                        <div className="mb-2 flex items-center justify-between gap-2">
-                          <span className="text-sm font-medium text-gray-700 dark:text-gray-200">厂商</span>
-                          <span className="rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-medium text-gray-600 dark:bg-white/[0.08] dark:text-gray-300">
-                            {getTokenVaultChannelLabel(getPurposeChannelTarget(purpose))}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2 rounded-xl bg-gray-100/80 p-1 dark:bg-black/20">
-                          {PLAYGROUND_API_CHANNELS.map((channel) => {
-                            const checked = getPurposeChannelTarget(purpose) === channel.target
-                            return (
-                              <button
-                                key={channel.id}
-                                type="button"
-                                onClick={() => updatePlaygroundApiChannel(purpose, channel.target)}
-                                className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${checked ? 'bg-white text-blue-600 shadow-sm dark:bg-white/[0.1] dark:text-blue-300' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100'}`}
-                              >
-                                {channel.label}
-                              </button>
-                            )
-                          })}
-                        </div>
-                      </div>
-
-                      <label className="block">
-                        <span className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-200">{title}访问令牌</span>
-                        <div className="relative">
-                          <input
-                            value={profile.apiKey}
-                            onChange={(e) => updateSimplifiedProfile(profile.id, { apiKey: e.target.value })}
-                            onBlur={(e) => updateSimplifiedProfile(profile.id, { apiKey: e.target.value }, true)}
-                            type={showApiKey ? 'text' : 'password'}
-                            placeholder="sk-..."
-                            className="w-full rounded-xl border border-gray-200/80 bg-white px-3 py-3 pr-24 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-100 dark:focus:border-blue-400/60"
-                          />
-                          <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
-                            <button
-                              type="button"
-                              onClick={() => setShowApiKey((v) => !v)}
-                              className="rounded-lg px-2 py-1.5 text-xs font-medium text-gray-500 transition hover:bg-gray-100 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-white/[0.08] dark:hover:text-gray-100"
-                            >
-                              {showApiKey ? '隐藏' : '显示'}
-                            </button>
-                          </div>
-                        </div>
-                      </label>
-
-                      <div className="rounded-xl border border-gray-200/70 bg-gray-50/80 p-3 dark:border-white/[0.08] dark:bg-black/20">
-                        <div className="mb-2 flex items-center justify-between gap-2">
-                          <span className="text-xs font-semibold text-gray-600 dark:text-gray-300">
-                            {getTokenVaultChannelLabel(getPurposeChannelTarget(purpose))} 令牌库
-                          </span>
-                          <span className="text-[11px] text-gray-400">
-                            {getTokenVaultItems(getPurposeChannelTarget(purpose)).length} 个
-                          </span>
-                        </div>
-                        <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
-                          <input
-                            value={tokenVaultNames[purpose] ?? ''}
-                            onChange={(e) => setTokenVaultNames((names) => ({ ...names, [purpose]: e.target.value }))}
-                            placeholder="命名当前令牌"
-                            className="min-w-0 rounded-lg border border-gray-200/80 bg-white px-3 py-2 text-xs text-gray-700 outline-none transition placeholder:text-gray-400 focus:border-blue-400 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-100"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => saveCurrentTokenToVault(purpose, profile)}
-                            className="rounded-lg bg-gray-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-black dark:bg-white dark:text-black dark:hover:bg-gray-200"
-                          >
-                            保存当前
-                          </button>
-                        </div>
-                        <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_auto]">
-                          <Select
-                            value=""
-                            onChange={(token) => {
-                              if (typeof token === 'string' && token) applyTokenFromVault(purpose, profile, token)
-                            }}
-                            options={[
-                              { label: '选择已保存令牌', value: '' },
-                              ...getTokenVaultItems(getPurposeChannelTarget(purpose)).map((item) => ({
-                                label: `${item.name} · ${maskToken(item.token)}`,
-                                value: item.token,
-                              })),
-                            ]}
-                            className="rounded-lg border border-gray-200/80 bg-white px-3 py-2 text-xs text-gray-700 outline-none transition focus:border-blue-400 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-100"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setShowTokenVault(true)}
-                            className="rounded-lg border border-gray-200/80 bg-white px-3 py-2 text-xs font-semibold text-gray-600 transition hover:bg-gray-100 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200 dark:hover:bg-white/[0.08]"
-                          >
-                            管理
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="rounded-xl border border-gray-200/70 bg-gray-50/80 p-3 dark:border-white/[0.08] dark:bg-black/20">
-                        <div className="mb-2 flex items-center justify-between gap-2">
-                          <span className="text-xs font-semibold text-gray-600 dark:text-gray-300">工作台模型</span>
-                          <button
-                            type="button"
-                            onClick={() => loadPurposeModels(purpose)}
-                            className="rounded-lg border border-gray-200/80 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 transition hover:bg-gray-100 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200 dark:hover:bg-white/[0.08]"
-                          >
-                            {modelPickerState[getPurposeModelPickerKey(purpose)]?.loading ? '读取中…' : '读取模型'}
-                          </button>
-                        </div>
-                        <div className="grid max-h-44 gap-2 overflow-y-auto pr-1 custom-scrollbar sm:grid-cols-2">
-                          {(modelPickerState[getPurposeModelPickerKey(purpose)]?.models.length
-                            ? modelPickerState[getPurposeModelPickerKey(purpose)]!.models
-                            : getSelectedModels(getPurposeChannelTarget(purpose), purpose)
-                          ).map((model) => {
-                            const checked = getSelectedModels(getPurposeChannelTarget(purpose), purpose).includes(model)
-                            return (
-                              <label key={model} className="flex min-w-0 items-center gap-2 rounded-lg border border-gray-200/70 bg-white px-2.5 py-2 text-xs text-gray-700 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200">
-                                <input
-                                  type="checkbox"
-                                  checked={checked}
-                                  onChange={() => togglePurposeModel(purpose, model)}
-                                  className="h-3.5 w-3.5 rounded border-gray-300 text-blue-500"
-                                />
-                                <span className="truncate" title={model}>{model}</span>
-                              </label>
-                            )
-                          })}
-                          {!modelPickerState[getPurposeModelPickerKey(purpose)]?.models.length && !getSelectedModels(getPurposeChannelTarget(purpose), purpose).length && (
-                            <div className="rounded-lg border border-dashed border-gray-200 px-3 py-4 text-center text-xs text-gray-400 dark:border-white/[0.08] sm:col-span-2">
-                              点击读取模型后选择工作台可用模型
-                            </div>
-                          )}
-                        </div>
-                        <div className="mt-3 border-t border-gray-200/70 pt-3 dark:border-white/[0.08]">
-                          <div className="mb-2 flex items-center justify-between gap-2">
-                            <span className="text-xs font-semibold text-gray-600 dark:text-gray-300">默认模型</span>
-                            <span className="min-w-0 truncate text-[11px] text-gray-400" title={profile.model}>
-                              当前：{profile.model}
-                            </span>
-                          </div>
-                          <Select
-                            value={profile.model || DEFAULT_SIMPLIFIED_MODELS[purpose]}
-                            onChange={(model) => {
-                              if (typeof model === 'string' && model) updateSimplifiedProfile(profile.id, { model }, true)
-                            }}
-                            options={getPurposeDefaultModelOptions(purpose, profile.model).map((model) => ({
-                              label: model,
-                              value: model,
-                            }))}
-                            className="rounded-lg border border-gray-200/80 bg-white px-3 py-2 text-xs text-gray-700 outline-none transition focus:border-blue-400 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-100"
-                          />
-                        </div>
-                      </div>
-
-                      {purpose === 'image' && (
-                        <div className="rounded-xl border border-blue-200/80 bg-blue-50/80 p-3 dark:border-blue-400/20 dark:bg-blue-500/10">
-                          <div className="flex items-start justify-between gap-3">
-                            <div data-selectable-text>
-                              <div className="text-xs font-semibold text-blue-800 dark:text-blue-200">返回 Base64 图片数据</div>
-                              <div className="mt-1 text-xs leading-relaxed text-blue-700/80 dark:text-blue-200/70">
-                                已默认打开，避免生成结果只返回图片 URL 时因跨域导致预览/下载失败。
+                    <div className="space-y-3">
+                      {modelChannels.map((channel) => {
+                        const target = channelTarget(channel)
+                        return (
+                          <section key={channel.id} className="rounded-2xl border border-gray-200/70 bg-white/85 p-4 shadow-sm dark:border-white/[0.08] dark:bg-white/[0.03]">
+                            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                              <div className="min-w-0">
+                                <div className="truncate text-sm font-bold text-gray-900 dark:text-gray-50">{channel.name || '未命名渠道'}</div>
+                                <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                                  {channel.apiFormat === 'gemini' ? 'Gemini' : 'OpenAI'} · 已保存 {channel.models.length} 个模型
+                                </div>
+                              </div>
+                              <div className="flex shrink-0 gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => void refreshChannelModels(channel)}
+                                  disabled={loadingChannelId === channel.id}
+                                  className="rounded-lg border border-gray-200/80 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 transition hover:bg-gray-100 disabled:cursor-wait disabled:opacity-60 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200 dark:hover:bg-white/[0.08]"
+                                >
+                                  {loadingChannelId === channel.id ? '拉取中…' : '拉取模型'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => deleteChannel(channel.id)}
+                                  className="rounded-lg border border-red-200/80 bg-white p-2 text-red-500 transition hover:bg-red-50 dark:border-red-500/30 dark:bg-white/[0.04] dark:text-red-300 dark:hover:bg-red-500/10"
+                                  aria-label="删除渠道"
+                                >
+                                  <TrashIcon className="h-3.5 w-3.5" />
+                                </button>
                               </div>
                             </div>
-                            <button
-                              type="button"
-                              onClick={() => updateSimplifiedProfile(profile.id, { responseFormatB64Json: !profile.responseFormatB64Json }, true)}
-                              className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${profile.responseFormatB64Json ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
-                              role="switch"
-                              aria-checked={!!profile.responseFormatB64Json}
-                              aria-label="返回 Base64 图片数据"
-                            >
-                              <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${profile.responseFormatB64Json ? 'translate-x-4' : 'translate-x-0.5'}`} />
-                            </button>
-                          </div>
-                        </div>
-                      )}
+
+                            <div className="grid gap-4 md:grid-cols-2">
+                              <label className="block">
+                                <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">渠道名称</span>
+                                <input
+                                  value={channel.name}
+                                  onChange={(event) => updateChannel(channel.id, { name: event.target.value })}
+                                  className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                                />
+                              </label>
+                              <label className="block">
+                                <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">调用格式</span>
+                                <Select
+                                  value={channel.apiFormat}
+                                  onChange={(value) => updateChannelApiFormat(channel, value as PlaygroundApiFormat)}
+                                  options={API_FORMAT_OPTIONS}
+                                  className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                                />
+                              </label>
+                              <label className="block">
+                                <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">Base URL</span>
+                                <input
+                                  value={channel.baseUrl}
+                                  onChange={(event) => updateChannel(channel.id, { baseUrl: event.target.value })}
+                                  onBlur={(event) => updateChannel(channel.id, { baseUrl: event.target.value.trim().replace(/\/+$/, '') })}
+                                  placeholder="https://api.openai.com/v1"
+                                  className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                                />
+                              </label>
+                              <label className="block">
+                                <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">API Key</span>
+                                <div className="relative">
+                                  <input
+                                    value={channel.apiKey}
+                                    onChange={(event) => updateChannel(channel.id, { apiKey: event.target.value })}
+                                    type={showApiKey ? 'text' : 'password'}
+                                    placeholder="sk-..."
+                                    className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 pr-14 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowApiKey((value) => !value)}
+                                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg px-2 py-1 text-xs text-gray-500 transition hover:bg-gray-100 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-white/[0.08] dark:hover:text-gray-100"
+                                  >
+                                    {showApiKey ? '隐藏' : '显示'}
+                                  </button>
+                                </div>
+                              </label>
+                              <div className="md:col-span-2">
+                                <div className="mb-1.5 flex items-center justify-between gap-2">
+                                  <span className="block text-sm text-gray-600 dark:text-gray-300">模型列表</span>
+                                  <span className="truncate text-[11px] text-gray-400" title={target}>{target}</span>
+                                </div>
+                                <div className="rounded-xl border border-gray-200/70 bg-gray-50/80 p-2 dark:border-white/[0.08] dark:bg-black/20">
+                                  <div className="mb-2 flex gap-2">
+                                    <input
+                                      value={channelModelInputs[channel.id] ?? ''}
+                                      onChange={(event) => setChannelModelInputs((inputs) => ({ ...inputs, [channel.id]: event.target.value }))}
+                                      onKeyDown={(event) => {
+                                        if (event.key !== 'Enter') return
+                                        event.preventDefault()
+                                        addChannelModel(channel)
+                                      }}
+                                      placeholder="输入模型名，或点击拉取模型"
+                                      className="min-w-0 flex-1 rounded-lg border border-gray-200/80 bg-white px-3 py-2 text-xs text-gray-700 outline-none transition placeholder:text-gray-400 focus:border-blue-400 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-100"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => addChannelModel(channel)}
+                                      className="rounded-lg bg-gray-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-black dark:bg-white dark:text-black dark:hover:bg-gray-200"
+                                    >
+                                      添加
+                                    </button>
+                                  </div>
+                                  {channel.models.length ? (
+                                    <div className="flex max-h-32 flex-wrap gap-1.5 overflow-y-auto pr-1 custom-scrollbar">
+                                      {channel.models.map((model) => (
+                                        <span key={model} className="inline-flex max-w-full items-center gap-1 rounded-full border border-gray-200/70 bg-white px-2 py-1 text-xs text-gray-600 dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-gray-300">
+                                          <span className="max-w-[260px] truncate" title={model}>{model}</span>
+                                          <button
+                                            type="button"
+                                            onClick={() => removeChannelModel(channel, model)}
+                                            className="rounded-full p-0.5 text-gray-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-500/10 dark:hover:text-red-300"
+                                            aria-label="移除模型"
+                                          >
+                                            <CloseIcon className="h-3 w-3" />
+                                          </button>
+                                        </span>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <div className="rounded-lg border border-dashed border-gray-200 px-3 py-4 text-center text-xs text-gray-400 dark:border-white/[0.08]">
+                                      暂无模型，手动输入或点击拉取模型。
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </section>
+                        )
+                      })}
                     </div>
                   </div>
-                ) : null)}
+                )}
 
-                <button
-                  type="button"
-                  onClick={() => setShowTokenVault(true)}
-                  className="flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200/80 bg-gray-50 px-4 py-2.5 text-sm font-semibold text-gray-700 transition hover:bg-gray-100 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200 dark:hover:bg-white/[0.08]"
-                >
-                  令牌库
-                </button>
+                {apiConfigTab === 'models' && (
+                  <div className="space-y-4">
+                    <div className="rounded-2xl border border-gray-200/70 bg-white/70 p-4 dark:border-white/[0.08] dark:bg-white/[0.03]">
+                      <div className="text-sm font-bold text-gray-900 dark:text-gray-50">默认模型和可选项</div>
+                      <div data-selectable-text className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
+                        可选项决定各处下拉框展示哪些模型；默认模型会同步到对应的对话、生图、视频请求配置。
+                      </div>
+                    </div>
 
-                <div data-selectable-text className="text-xs leading-relaxed text-gray-500 dark:text-gray-500">
-                  填写后会自动保存到当前浏览器。本页不会展示或上传明文令牌。
-                </div>
+                    <div className="grid gap-4 xl:grid-cols-3">
+                      {MODEL_CONFIG_GROUPS.map((group) => {
+                        const profile = profileByPurpose[group.purpose]
+                        const entries = purposeModelEntries(group.purpose, profile?.model ?? '')
+                        const activeTarget = getPurposeChannelTarget(group.purpose)
+                        const activeValue = modelOptionValue(activeTarget, profile?.model || DEFAULT_SIMPLIFIED_MODELS[group.purpose])
+                        return (
+                          <section key={group.purpose} className="rounded-2xl border border-gray-200/70 bg-white/85 p-4 shadow-sm dark:border-white/[0.08] dark:bg-white/[0.03]">
+                            <div className="mb-4 flex items-start justify-between gap-3">
+                              <div>
+                                <div className="text-sm font-bold text-gray-900 dark:text-gray-50">{group.label}模型</div>
+                                <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">{getTokenVaultChannelLabel(activeTarget)}</div>
+                              </div>
+                              <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-600 dark:bg-white/[0.08] dark:text-gray-300">
+                                {group.badge}
+                              </span>
+                            </div>
+
+                            <div className="space-y-3">
+                              <div>
+                                <div className="mb-1.5 flex items-center justify-between gap-2">
+                                  <span className="text-xs font-semibold text-gray-600 dark:text-gray-300">{group.optionsLabel}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => setApiConfigTab('channels')}
+                                    className="text-xs font-semibold text-blue-600 hover:text-blue-700 dark:text-blue-300 dark:hover:text-blue-200"
+                                  >
+                                    去渠道设置
+                                  </button>
+                                </div>
+                                <div className="max-h-48 space-y-1 overflow-y-auto rounded-xl border border-gray-200/70 bg-gray-50/80 p-2 pr-1 custom-scrollbar dark:border-white/[0.08] dark:bg-black/20">
+                                  {entries.length ? entries.map((entry) => {
+                                    const checked = getSelectedModels(entry.target, group.purpose).includes(entry.model)
+                                    const isDefault = activeTarget === entry.target && profile?.model === entry.model
+                                    return (
+                                      <label key={`${entry.target}-${entry.model}`} className={`flex min-w-0 items-center gap-2 rounded-lg px-2.5 py-2 text-xs transition ${checked ? 'bg-blue-50 text-gray-800 dark:bg-blue-500/10 dark:text-gray-100' : 'text-gray-600 hover:bg-white dark:text-gray-300 dark:hover:bg-white/[0.05]'}`}>
+                                        <input
+                                          type="checkbox"
+                                          checked={checked}
+                                          onChange={(event) => setPurposeModelEnabled(group.purpose, entry.target, entry.model, event.target.checked)}
+                                          className="h-3.5 w-3.5 shrink-0 rounded border-gray-300 text-blue-500"
+                                        />
+                                        <span className="min-w-0 flex-1 break-all leading-4" title={entry.label}>{entry.label}</span>
+                                        {isDefault && (
+                                          <span className="shrink-0 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700 dark:bg-blue-500/15 dark:text-blue-200">
+                                            默认
+                                          </span>
+                                        )}
+                                      </label>
+                                    )
+                                  }) : (
+                                    <div className="rounded-lg border border-dashed border-gray-200 px-3 py-4 text-center text-xs text-gray-400 dark:border-white/[0.08]">
+                                      先到渠道里填写或拉取模型。
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div>
+                                <div className="mb-1.5 text-xs font-semibold text-gray-600 dark:text-gray-300">{group.defaultLabel}</div>
+                                <Select
+                                  value={activeValue}
+                                  onChange={(value) => updatePurposeDefaultModelFromEntry(group.purpose, String(value))}
+                                  options={(entries.length ? entries : [{ target: activeTarget, model: profile?.model || DEFAULT_SIMPLIFIED_MODELS[group.purpose], label: profile?.model || DEFAULT_SIMPLIFIED_MODELS[group.purpose] }]).map((entry) => ({
+                                    label: entry.label,
+                                    value: modelOptionValue(entry.target, entry.model),
+                                  }))}
+                                  className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                                />
+                              </div>
+                            </div>
+                          </section>
+                        )
+                      })}
+                    </div>
+
+                    <div className="rounded-2xl border border-blue-200/80 bg-blue-50/80 p-4 dark:border-blue-400/20 dark:bg-blue-500/10">
+                      <div className="flex items-start justify-between gap-3">
+                        <div data-selectable-text>
+                          <div className="text-xs font-semibold text-blue-800 dark:text-blue-200">返回 Base64 图片数据</div>
+                          <div className="mt-1 text-xs leading-relaxed text-blue-700/80 dark:text-blue-200/70">
+                            生图默认开启，避免生成结果只返回图片 URL 时因跨域导致预览/下载失败。
+                          </div>
+                        </div>
+                        {simplifiedImageProfile && (
+                          <button
+                            type="button"
+                            onClick={() => updateSimplifiedProfile(simplifiedImageProfile.id, { responseFormatB64Json: !simplifiedImageProfile.responseFormatB64Json }, true)}
+                            className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${simplifiedImageProfile.responseFormatB64Json ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                            role="switch"
+                            aria-checked={!!simplifiedImageProfile.responseFormatB64Json}
+                            aria-label="返回 Base64 图片数据"
+                          >
+                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${simplifiedImageProfile.responseFormatB64Json ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
               ) : (
               <div className="space-y-4">
@@ -2501,14 +2804,15 @@ export default function SettingsModal() {
               </div>
 
               <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 pb-6 custom-scrollbar">
-                {PLAYGROUND_API_CHANNELS.map((channel) => {
-                  const items = getTokenVaultItems(channel.target)
+                {modelChannels.map((channel) => {
+                  const target = channelTarget(channel)
+                  const items = getTokenVaultItems(target)
                   return (
                     <section key={channel.id} className="rounded-2xl border border-gray-200/70 bg-gray-50/80 p-4 dark:border-white/[0.08] dark:bg-white/[0.03]">
                       <div className="mb-3 flex items-center justify-between gap-3">
                         <div>
-                          <div className="text-sm font-bold text-gray-800 dark:text-gray-100">{channel.label}</div>
-                          <div className="mt-0.5 text-xs text-gray-500 dark:text-gray-500">{channel.target}</div>
+                          <div className="text-sm font-bold text-gray-800 dark:text-gray-100">{channel.name}</div>
+                          <div className="mt-0.5 text-xs text-gray-500 dark:text-gray-500">{target}</div>
                         </div>
                         <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-gray-500 dark:bg-white/[0.08] dark:text-gray-300">
                           {items.length} 个
@@ -2524,7 +2828,7 @@ export default function SettingsModal() {
                               </div>
                               <button
                                 type="button"
-                                onClick={() => removeTokenFromVault(channel.target, item.id)}
+                                onClick={() => removeTokenFromVault(target, item.id)}
                                 className="shrink-0 rounded-lg p-2 text-gray-400 transition hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-500/10 dark:hover:text-red-300"
                                 aria-label="删除令牌"
                               >

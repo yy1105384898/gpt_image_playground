@@ -1,4 +1,12 @@
 import { readRuntimeEnv } from './runtimeEnv'
+import {
+  DEFAULT_PLAYGROUND_MODEL_CHANNELS,
+  findPlaygroundModelChannelByTarget,
+  getDefaultPlaygroundModelChannelTarget,
+  getPlaygroundModelChannelTarget,
+  getPlaygroundModelChannels,
+  normalizePlaygroundBaseUrl,
+} from './playgroundChannels'
 
 export interface DevProxyConfig {
   enabled: boolean
@@ -9,10 +17,11 @@ export interface DevProxyConfig {
 }
 
 const DEFAULT_PROXY_PREFIX = '/api-proxy'
-export const PLAYGROUND_API_CHANNELS = [
-  { id: 'newapi', label: 'NewAPI', target: 'https://yynewapi.yangyangnj.top/v1' },
-  { id: 'subapi', label: 'SubAPI', target: 'https://yysubapi.yangyangnj.top/v1' },
-] as const
+export const PLAYGROUND_API_CHANNELS = DEFAULT_PLAYGROUND_MODEL_CHANNELS.map((channel) => ({
+  id: channel.id,
+  label: channel.name,
+  target: getPlaygroundModelChannelTarget(channel),
+}))
 
 export type PlaygroundApiPurpose = 'text' | 'image' | 'video'
 export const PLAYGROUND_API_CHANNEL_STORAGE_KEY = 'yy-image-pro.api-channel'
@@ -23,11 +32,15 @@ export const PLAYGROUND_API_CHANNEL_STORAGE_KEYS: Record<PlaygroundApiPurpose, s
 }
 
 function normalizeApiChannelTarget(target: string | null): string {
-  return PLAYGROUND_API_CHANNELS.find((channel) => channel.target === target || channel.id === target)?.target ?? PLAYGROUND_API_CHANNELS[0].target
+  const requested = String(target || '').trim()
+  if (!requested) return getDefaultPlaygroundModelChannelTarget()
+  const channel = findPlaygroundModelChannelByTarget(requested)
+  if (channel) return getPlaygroundModelChannelTarget(channel)
+  return normalizePlaygroundBaseUrl(requested) || getDefaultPlaygroundModelChannelTarget()
 }
 
 export function getPlaygroundApiChannelTarget(purpose: PlaygroundApiPurpose = 'image'): string {
-  if (typeof window === 'undefined') return PLAYGROUND_API_CHANNELS[0].target
+  if (typeof window === 'undefined') return getDefaultPlaygroundModelChannelTarget()
   const saved = window.localStorage.getItem(PLAYGROUND_API_CHANNEL_STORAGE_KEYS[purpose])
     ?? window.localStorage.getItem(PLAYGROUND_API_CHANNEL_STORAGE_KEY)
   return normalizeApiChannelTarget(saved)
@@ -128,7 +141,7 @@ export function readClientDevProxyConfig(): DevProxyConfig | null {
 function isHostedPlaygroundProxyAvailable(): boolean {
   if (typeof window === 'undefined') return false
   const pathname = window.location.pathname.replace(/\/+/g, '/')
-  return PLAYGROUND_API_CHANNELS.length > 0 && (pathname === '/playground' || pathname.startsWith('/playground/'))
+  return getPlaygroundModelChannels().length > 0 && (pathname === '/playground' || pathname.startsWith('/playground/'))
 }
 
 export function isApiProxyAvailable(proxyConfig: DevProxyConfig | null = readClientDevProxyConfig()): boolean {

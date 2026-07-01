@@ -1,4 +1,4 @@
-import { PLAYGROUND_API_CHANNELS } from './devProxy'
+import { getPlaygroundModelChannelLabel } from './playgroundChannels'
 
 export interface TokenVaultItem {
   id: string
@@ -85,5 +85,5 @@ export function maskToken(token: string) {
 }
 
 export function getTokenVaultChannelLabel(target: string) {
-  return PLAYGROUND_API_CHANNELS.find((channel) => channel.target === target)?.label ?? target
+  return getPlaygroundModelChannelLabel(target)
 }
