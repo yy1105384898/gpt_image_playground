@@ -11,6 +11,8 @@ import {
   shouldUseApiProxy,
   type PlaygroundApiPurpose,
 } from './devProxy'
+import { getStoredPlaygroundPurposeConfig } from './playgroundPurposeConfig'
+import { getTokenVaultItems } from './tokenVault'
 
 export interface ModelGroup {
   id: string
@@ -29,6 +31,7 @@ const SIMPLIFIED_PROFILE_IDS: Record<PlaygroundApiPurpose, string> = {
 
 const VIDEO_RE = /video|sora|kling|veo|seedance|runway|pika|hailuo|vidu|wan2|minimax-video/i
 const IMAGE_RE = /image|flux|dall[-_ ]?e|imagen|nano[-_ ]?banana|banana|qwen.*image|stable|\bsd\d|midjourney|\bmj\b|recraft|ideogram|seedream|kolors|hunyuan.*image|grok.*image/i
+const AUDIO_RE = /audio|tts|speech|voice|music|sound/i
 const SELECTED_MODELS_STORAGE_KEY = 'yy-image-pro.selected-models'
 const CHANNEL_MODELS_STORAGE_KEY = 'yy-image-pro.channel-model-cache'
 const CHANNEL_MODELS_CACHE_TTL_MS = 5 * 60 * 1000
@@ -82,6 +85,10 @@ export function getSelectedModels(target: string, purpose: PlaygroundApiPurpose)
   return readSelectedModelsState()[target]?.[purpose]?.filter(Boolean) ?? []
 }
 
+export function hasSelectedModelsConfig(target: string, purpose: PlaygroundApiPurpose): boolean {
+  return Array.isArray(readSelectedModelsState()[target]?.[purpose])
+}
+
 export function setSelectedModels(target: string, purpose: PlaygroundApiPurpose, models: string[]) {
   if (typeof window === 'undefined') return
   const state = readSelectedModelsState()
@@ -90,14 +97,16 @@ export function setSelectedModels(target: string, purpose: PlaygroundApiPurpose,
     [purpose]: Array.from(new Set(models.filter(Boolean))),
   }
   window.localStorage.setItem(SELECTED_MODELS_STORAGE_KEY, JSON.stringify(state))
+  cache.delete(purpose)
+  inflight.delete(purpose)
 }
 
 export function isModelForPurpose(id: string, purpose: PlaygroundApiPurpose): boolean {
   const lower = id.toLowerCase()
   if (purpose === 'video') return VIDEO_RE.test(lower)
-  if (purpose === 'image') return !VIDEO_RE.test(lower) && IMAGE_RE.test(lower)
+  if (purpose === 'image') return !VIDEO_RE.test(lower) && !AUDIO_RE.test(lower) && IMAGE_RE.test(lower)
   // text: anything that isn't clearly an image or video model
-  return !VIDEO_RE.test(lower) && !IMAGE_RE.test(lower)
+  return !VIDEO_RE.test(lower) && !IMAGE_RE.test(lower) && !AUDIO_RE.test(lower)
 }
 
 export function getDefaultSelectedModels(models: string[], purpose: PlaygroundApiPurpose): string[] {
@@ -117,9 +126,42 @@ function profileForPurpose(purpose: PlaygroundApiPurpose) {
   )
 }
 
+function tokenForTargetPurpose(target: string, purpose: PlaygroundApiPurpose): string {
+  const stored = getStoredPlaygroundPurposeConfig(target, purpose)
+  if (stored.apiKey?.trim()) return stored.apiKey
+  const items = getTokenVaultItems(target)
+  const matcher = purpose === 'text'
+    ? /chat|对话|文本/i
+    : purpose === 'image'
+      ? /生图|图片|image|images/i
+      : /视频|video/i
+  return items.find((item) => matcher.test(item.name))?.token ?? (items.length === 1 ? items[0].token : '')
+}
+
 async function fetchChannelModels(target: string, purpose: PlaygroundApiPurpose): Promise<string[]> {
   const profile = profileForPurpose(purpose)
-  const auth = authHeader(profile?.apiKey ?? '')
+  const auth = authHeader(tokenForTargetPurpose(target, purpose) || profile?.apiKey || '')
+  const proxyConfig = readClientDevProxyConfig()
+  const useApiProxy = shouldUseApiProxy(profile?.apiProxy ?? true, proxyConfig)
+  const url = buildApiUrl(target, 'models', proxyConfig, useApiProxy)
+  const headers: Record<string, string> = {
+    'X-YY-API-Target': target,
+    'X-YY-API-Purpose': purpose,
+  }
+  if (auth) headers.Authorization = auth
+  try {
+    const resp = await fetch(url, { method: 'GET', headers, cache: 'no-store' })
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+    const json = await resp.json()
+    const list: unknown[] = Array.isArray(json) ? json : Array.isArray(json?.data) ? json.data : []
+    const ids = list
+      .map((item) => (typeof item === 'string' ? item : typeof (item as { id?: unknown })?.id === 'string' ? (item as { id: string }).id : ''))
+      .filter(Boolean)
+    const models = Array.from(new Set(ids))
+    if (models.length) return models
+  } catch {
+    // Hosted Flask helper below understands NewAPI/SubAPI routing and is kept as a fallback.
+  }
   if (typeof window !== 'undefined' && window.location.pathname.replace(/\/+/g, '/').startsWith('/playground/')) {
     try {
       const resp = await fetch('/api/playground/models', {
@@ -149,22 +191,7 @@ async function fetchChannelModels(target: string, purpose: PlaygroundApiPurpose)
       // Fall back to the OpenAI-compatible /models endpoint below.
     }
   }
-  const proxyConfig = readClientDevProxyConfig()
-  const useApiProxy = shouldUseApiProxy(profile?.apiProxy ?? true, proxyConfig)
-  const url = buildApiUrl(target, 'models', proxyConfig, useApiProxy)
-  const headers: Record<string, string> = {
-    'X-YY-API-Target': target,
-    'X-YY-API-Purpose': purpose,
-  }
-  if (auth) headers.Authorization = auth
-  const resp = await fetch(url, { method: 'GET', headers, cache: 'no-store' })
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-  const json = await resp.json()
-  const list: unknown[] = Array.isArray(json) ? json : Array.isArray(json?.data) ? json.data : []
-  const ids = list
-    .map((item) => (typeof item === 'string' ? item : typeof (item as { id?: unknown })?.id === 'string' ? (item as { id: string }).id : ''))
-    .filter(Boolean)
-  return Array.from(new Set(ids))
+  return []
 }
 
 export async function getChannelModels(target: string, purpose: PlaygroundApiPurpose, force = false): Promise<string[]> {
@@ -204,7 +231,9 @@ export async function getModelGroups(purpose: PlaygroundApiPurpose, force = fals
         try {
           const allModels = await getChannelModels(channel.target, purpose, force)
           const selected = getSelectedModels(channel.target, purpose)
-          const allowed = selected.length ? allModels.filter((id) => selected.includes(id)) : allModels.filter((id) => isModelForPurpose(id, purpose))
+          const allowed = hasSelectedModelsConfig(channel.target, purpose)
+            ? allModels.filter((id) => selected.includes(id))
+            : allModels.filter((id) => isModelForPurpose(id, purpose))
           return { id: channel.id, label: channel.label, target: channel.target, models: allowed }
         } catch {
           return { id: channel.id, label: channel.label, target: channel.target, models: [] }

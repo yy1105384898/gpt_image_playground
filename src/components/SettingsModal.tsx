@@ -33,6 +33,7 @@ import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { DEFAULT_DROPDOWN_MAX_HEIGHT, getDropdownMaxHeight } from '../lib/dropdown'
 import { getChannelModels, getDefaultSelectedModels, getSelectedModels, setSelectedModels } from '../lib/modelCatalog'
+import { getStoredPlaygroundPurposeConfig, savePlaygroundPurposeConfig } from '../lib/playgroundPurposeConfig'
 import Select from './Select'
 import { Checkbox } from './Checkbox'
 import ViewportTooltip from './ViewportTooltip'
@@ -58,10 +59,6 @@ const SIMPLIFIED_TEXT_PROFILE_ID = 'yy-text-profile'
 const SIMPLIFIED_IMAGE_PROFILE_ID = 'yy-image-profile'
 const SIMPLIFIED_VIDEO_PROFILE_ID = 'yy-video-profile'
 const SIMPLIFIED_VIDEO_DEFAULT_MODEL = 'grok-video-1.0'
-const PLAYGROUND_CHANNEL_CONFIG_STORAGE_KEY = 'yy-image-pro.channel-configs.v2'
-
-type SimplifiedPurposeConfig = Record<PlaygroundApiPurpose, { apiKey: string; model: string }>
-type PlaygroundChannelConfigs = Record<string, Partial<SimplifiedPurposeConfig>>
 
 const DEFAULT_SIMPLIFIED_MODELS: Record<PlaygroundApiPurpose, string> = {
   text: DEFAULT_RESPONSES_MODEL,
@@ -73,6 +70,12 @@ const SIMPLIFIED_PROFILE_PURPOSES: Record<string, PlaygroundApiPurpose> = {
   [SIMPLIFIED_TEXT_PROFILE_ID]: 'text',
   [SIMPLIFIED_IMAGE_PROFILE_ID]: 'image',
   [SIMPLIFIED_VIDEO_PROFILE_ID]: 'video',
+}
+
+const SIMPLIFIED_PROFILE_IDS_BY_PURPOSE: Record<PlaygroundApiPurpose, string> = {
+  text: SIMPLIFIED_TEXT_PROFILE_ID,
+  image: SIMPLIFIED_IMAGE_PROFILE_ID,
+  video: SIMPLIFIED_VIDEO_PROFILE_ID,
 }
 
 type CopyImportUrlOptions = typeof DEFAULT_COPY_IMPORT_URL_OPTIONS
@@ -122,25 +125,6 @@ function saveCopyImportUrlOptions(options: CopyImportUrlOptions) {
   }
 }
 
-function readPlaygroundChannelConfigs(): PlaygroundChannelConfigs {
-  if (typeof window === 'undefined') return {}
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(PLAYGROUND_CHANNEL_CONFIG_STORAGE_KEY) || '{}') as PlaygroundChannelConfigs
-    return parsed && typeof parsed === 'object' ? parsed : {}
-  } catch {
-    return {}
-  }
-}
-
-function writePlaygroundChannelConfigs(configs: PlaygroundChannelConfigs) {
-  if (typeof window === 'undefined') return
-  window.localStorage.setItem(PLAYGROUND_CHANNEL_CONFIG_STORAGE_KEY, JSON.stringify(configs))
-}
-
-function getStoredPurposeConfig(target: string, purpose: PlaygroundApiPurpose) {
-  return readPlaygroundChannelConfigs()[target]?.[purpose]
-}
-
 function getVaultTokenForPurpose(target: string, purpose: PlaygroundApiPurpose): string {
   const items = getTokenVaultItems(target)
   const matcher = purpose === 'text'
@@ -152,7 +136,7 @@ function getVaultTokenForPurpose(target: string, purpose: PlaygroundApiPurpose):
 }
 
 function resolveStoredPurposeConfig(target: string, purpose: PlaygroundApiPurpose) {
-  const stored = getStoredPurposeConfig(target, purpose)
+  const stored = getStoredPlaygroundPurposeConfig(target, purpose)
   return {
     apiKey: stored?.apiKey ?? getVaultTokenForPurpose(target, purpose),
     model: stored?.model ?? DEFAULT_SIMPLIFIED_MODELS[purpose],
@@ -160,16 +144,10 @@ function resolveStoredPurposeConfig(target: string, purpose: PlaygroundApiPurpos
 }
 
 function saveStoredPurposeConfig(target: string, purpose: PlaygroundApiPurpose, patch: Partial<{ apiKey: string; model: string }>) {
-  const configs = readPlaygroundChannelConfigs()
-  const previous = configs[target]?.[purpose]
-  configs[target] = {
-    ...(configs[target] ?? {}),
-    [purpose]: {
-      apiKey: patch.apiKey ?? previous?.apiKey ?? '',
-      model: patch.model ?? previous?.model ?? DEFAULT_SIMPLIFIED_MODELS[purpose],
-    },
-  }
-  writePlaygroundChannelConfigs(configs)
+  savePlaygroundPurposeConfig(target, purpose, {
+    apiKey: patch.apiKey,
+    model: patch.model,
+  })
 }
 
 interface CustomProviderForm {
@@ -256,6 +234,14 @@ function isPristineNewOpenAIProfile(profile: ApiProfile) {
     profile.apiProxy === defaultProfile.apiProxy &&
     profile.streamImages === defaultProfile.streamImages &&
     profile.streamPartialImages === defaultProfile.streamPartialImages
+}
+
+function baseDraftProfileModel(draft: AppSettings, profileId: string) {
+  return draft.profiles.find((profile) => profile.id === profileId)?.model ?? ''
+}
+
+function uniqueModelOptions(models: string[]) {
+  return Array.from(new Set(models.map((model) => model.trim()).filter(Boolean)))
 }
 
 function getImportedProfileFromMergedSettings(
@@ -531,6 +517,15 @@ export default function SettingsModal() {
   const getPurposeChannelTarget = (purpose: PlaygroundApiPurpose) => apiChannelTargets[purpose] || getPlaygroundApiChannelTarget(purpose)
   const getPurposeModelPickerKey = (purpose: PlaygroundApiPurpose) => `${purpose}:${getPurposeChannelTarget(purpose)}`
   const getPurposeSelectedModels = (purpose: PlaygroundApiPurpose) => getSelectedModels(getPurposeChannelTarget(purpose), purpose)
+  const getPurposeDefaultModelOptions = (purpose: PlaygroundApiPurpose, model: string) => {
+    const pickerModels = modelPickerState[getPurposeModelPickerKey(purpose)]?.models ?? []
+    const selectedModels = getPurposeSelectedModels(purpose)
+    return uniqueModelOptions([
+      ...(selectedModels.length ? selectedModels : pickerModels),
+      model,
+      DEFAULT_SIMPLIFIED_MODELS[purpose],
+    ])
+  }
   const defaultProviderOrder = ['openai', 'fal', ...draft.customProviders.map(p => p.id)]
   const providerOrder = draft.providerOrder || defaultProviderOrder
 
@@ -928,7 +923,13 @@ export default function SettingsModal() {
         const actualModelSet = new Set(models)
         const sanitizedSelected = selected.filter((model) => actualModelSet.has(model))
         if (sanitizedSelected.length !== selected.length) setSelectedModels(target, purpose, sanitizedSelected)
-        if (!sanitizedSelected.length) setSelectedModels(target, purpose, getDefaultSelectedModels(models, purpose))
+        const nextSelected = sanitizedSelected.length ? sanitizedSelected : getDefaultSelectedModels(models, purpose)
+        if (!sanitizedSelected.length) setSelectedModels(target, purpose, nextSelected)
+        const profileId = SIMPLIFIED_PROFILE_IDS_BY_PURPOSE[purpose]
+        const currentModel = baseDraftProfileModel(draft, profileId)
+        if (nextSelected.length && !nextSelected.includes(currentModel)) {
+          updateSimplifiedProfile(profileId, { model: nextSelected[0] }, true)
+        }
         setModelPickerState((state) => ({ ...state, [key]: { loading: false, models } }))
         setModelPickerVersion((version) => version + 1)
         showToast('模型已读取', 'success')
@@ -944,7 +945,13 @@ export default function SettingsModal() {
     const selected = new Set(getSelectedModels(target, purpose))
     if (selected.has(model)) selected.delete(model)
     else selected.add(model)
-    setSelectedModels(target, purpose, Array.from(selected))
+    const nextSelected = Array.from(selected)
+    setSelectedModels(target, purpose, nextSelected)
+    const profileId = SIMPLIFIED_PROFILE_IDS_BY_PURPOSE[purpose]
+    const currentModel = baseDraftProfileModel(draft, profileId)
+    if (nextSelected.length && !nextSelected.includes(currentModel)) {
+      updateSimplifiedProfile(profileId, { model: nextSelected[0] }, true)
+    }
     setModelPickerVersion((version) => version + 1)
   }
 
@@ -1745,6 +1752,25 @@ export default function SettingsModal() {
                               点击读取模型后选择工作台可用模型
                             </div>
                           )}
+                        </div>
+                        <div className="mt-3 border-t border-gray-200/70 pt-3 dark:border-white/[0.08]">
+                          <div className="mb-2 flex items-center justify-between gap-2">
+                            <span className="text-xs font-semibold text-gray-600 dark:text-gray-300">默认模型</span>
+                            <span className="min-w-0 truncate text-[11px] text-gray-400" title={profile.model}>
+                              当前：{profile.model}
+                            </span>
+                          </div>
+                          <Select
+                            value={profile.model || DEFAULT_SIMPLIFIED_MODELS[purpose]}
+                            onChange={(model) => {
+                              if (typeof model === 'string' && model) updateSimplifiedProfile(profile.id, { model }, true)
+                            }}
+                            options={getPurposeDefaultModelOptions(purpose, profile.model).map((model) => ({
+                              label: model,
+                              value: model,
+                            }))}
+                            className="rounded-lg border border-gray-200/80 bg-white px-3 py-2 text-xs text-gray-700 outline-none transition focus:border-blue-400 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-100"
+                          />
                         </div>
                       </div>
 

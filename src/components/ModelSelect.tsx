@@ -1,5 +1,5 @@
-import { useMemo } from 'react'
-import { getSelectedModels, useModelGroups } from '../lib/modelCatalog'
+import { useEffect, useMemo } from 'react'
+import { getSelectedModels, hasSelectedModelsConfig, useModelGroups } from '../lib/modelCatalog'
 import { getPlaygroundApiChannelTarget, type PlaygroundApiPurpose } from '../lib/devProxy'
 
 const SEP = '::yy-model::'
@@ -26,12 +26,20 @@ export default function ModelSelect({ purpose, value, target, showAllChannels = 
   const displayGroups = useMemo(() => activeGroups.map((group) => {
     const selected = getSelectedModels(group.target, purpose)
     const selectedSet = new Set(selected)
-    const baseModels = selected.length ? group.models.filter((model) => selectedSet.has(model)) : group.models
-    if (group.target !== activeTarget || !value || baseModels.includes(value)) return { ...group, models: baseModels }
-    return { ...group, models: [value, ...baseModels] }
+    const baseModels = hasSelectedModelsConfig(group.target, purpose)
+      ? group.models.filter((model) => selectedSet.has(model))
+      : group.models
+    return { ...group, models: baseModels }
   }), [activeGroups, activeTarget, purpose, value])
 
   const hasGroups = displayGroups.length > 0
+  useEffect(() => {
+    if (!enabled || loading || !hasGroups) return
+    if (displayGroups.some((group) => group.models.includes(value))) return
+    const firstGroup = displayGroups.find((group) => group.models.length > 0)
+    if (firstGroup) onSelect(firstGroup.target, firstGroup.models[0])
+  }, [displayGroups, enabled, hasGroups, loading, onSelect, value])
+
   const selectValue = useMemo(() => {
     if (hasGroups) {
       const targetGroup = displayGroups.find((g) => g.target === activeTarget && g.models.includes(value))
@@ -39,7 +47,8 @@ export default function ModelSelect({ purpose, value, target, showAllChannels = 
       for (const g of displayGroups) {
         if (g.models.includes(value)) return `${g.target}${SEP}${value}`
       }
-      // Current value isn't in any group — default to first group's first model marker.
+      // Current value isn't in any allowed group — keep a hidden marker until the
+      // user picks one, but don't render it as a selectable option.
       return `${SEP}${value}`
     }
     return `${SEP}${value}`

@@ -3,6 +3,7 @@ import { useStore } from '../store'
 import { useVideoStore, type VideoTask } from '../videoStore'
 import { createVideo, fetchVideoContentObjectUrl, pollVideo, VIDEO_DURATIONS, VIDEO_ASPECTS, VIDEO_SIZES, type VideoMode } from '../lib/videoApi'
 import { getPlaygroundApiChannelTarget, setPlaygroundApiChannelTarget } from '../lib/devProxy'
+import { savePlaygroundPurposeConfig } from '../lib/playgroundPurposeConfig'
 import { fileToDataUrl } from '../lib/dataUrl'
 import { getAtImageQuery, getImageMentionLabel, getPromptMentionParts, getSelectedImageMentionLabel, insertImageMentionAtVisibleRange, replaceImageMentionsForApi, stripImageMentionMarkers } from '../lib/promptImageMentions'
 import { copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
@@ -1049,6 +1050,7 @@ export default function VideoWorkspace() {
                 target={getPlaygroundApiChannelTarget('video')}
                 onSelect={(target, model) => {
                   setPlaygroundApiChannelTarget(target, 'video')
+                  savePlaygroundPurposeConfig(target, 'video', { model })
                   setParams({ model })
                 }}
               />

@@ -4,6 +4,7 @@ import { useStore } from '../store'
 import { callTextChatApi } from '../lib/chatApi'
 import { getPlaygroundApiChannelTarget, setPlaygroundApiChannelTarget } from '../lib/devProxy'
 import { getModelGroups } from '../lib/modelCatalog'
+import { savePlaygroundPurposeConfig } from '../lib/playgroundPurposeConfig'
 import { normalizeSettings } from '../lib/apiProfiles'
 import ModelSelect from './ModelSelect'
 import MarkdownRenderer from './MarkdownRenderer'
@@ -189,6 +190,7 @@ export default function ChatWorkspace() {
               fallbackModels={[DEFAULT_CHAT_MODEL, 'gpt-4.1-mini', 'gpt-4o-mini']}
               onSelect={(target, nextModel) => {
                 if (target) setPlaygroundApiChannelTarget(target, 'text')
+                if (target) savePlaygroundPurposeConfig(target, 'text', { model: nextModel })
                 setModel(nextModel, target)
               }}
               className="yy-model-select h-[42px] w-[150px] rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 text-sm text-gray-100 outline-none transition hover:bg-white/[0.08]"

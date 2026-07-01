@@ -9,6 +9,7 @@ import { normalizeImageSize } from '../lib/size'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { getSafeBoundingClientRect } from '../lib/domRect'
 import { getPlaygroundApiChannelTarget, shouldUseApiProxy, setPlaygroundApiChannelTarget } from '../lib/devProxy'
+import { savePlaygroundPurposeConfig } from '../lib/playgroundPurposeConfig'
 import { collectAgentRoundOutputImageSlots } from '../lib/agentImageReferences'
 import { useHintTooltip } from '../hooks/useHintTooltip'
 import { downloadImageEntriesAsZip, downloadImageIds, formatExportFileTime, getTaskOutputImageZipEntries } from '../lib/downloadImages'
@@ -1929,6 +1930,7 @@ export default function InputBar() {
       modelTarget={getPlaygroundApiChannelTarget('image')}
       onModelChange={(target, model) => {
         setPlaygroundApiChannelTarget(target, 'image')
+        savePlaygroundPurposeConfig(target, 'image', { model })
         const imageProfileId = settings.profiles.some((p) => p.id === 'yy-image-profile')
           ? 'yy-image-profile'
           : activeProfile.id
