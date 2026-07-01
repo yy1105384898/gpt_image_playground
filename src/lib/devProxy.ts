@@ -3,9 +3,11 @@ import {
   DEFAULT_PLAYGROUND_MODEL_CHANNELS,
   findPlaygroundModelChannelByTarget,
   getDefaultPlaygroundModelChannelTarget,
+  getPlaygroundModelChannelRef,
   getPlaygroundModelChannelTarget,
   getPlaygroundModelChannels,
   normalizePlaygroundBaseUrl,
+  resolvePlaygroundModelChannelTarget,
 } from './playgroundChannels'
 
 export interface DevProxyConfig {
@@ -20,7 +22,7 @@ const DEFAULT_PROXY_PREFIX = '/api-proxy'
 export const PLAYGROUND_API_CHANNELS = DEFAULT_PLAYGROUND_MODEL_CHANNELS.map((channel) => ({
   id: channel.id,
   label: channel.name,
-  target: getPlaygroundModelChannelTarget(channel),
+  target: getPlaygroundModelChannelRef(channel),
 }))
 
 export type PlaygroundApiPurpose = 'text' | 'image' | 'video'
@@ -35,8 +37,12 @@ function normalizeApiChannelTarget(target: string | null): string {
   const requested = String(target || '').trim()
   if (!requested) return getDefaultPlaygroundModelChannelTarget()
   const channel = findPlaygroundModelChannelByTarget(requested)
-  if (channel) return getPlaygroundModelChannelTarget(channel)
+  if (channel) return getPlaygroundModelChannelRef(channel)
   return normalizePlaygroundBaseUrl(requested) || getDefaultPlaygroundModelChannelTarget()
+}
+
+export function getPlaygroundApiResolvedTarget(purpose: PlaygroundApiPurpose = 'image'): string {
+  return resolvePlaygroundModelChannelTarget(getPlaygroundApiChannelTarget(purpose))
 }
 
 export function getPlaygroundApiChannelTarget(purpose: PlaygroundApiPurpose = 'image'): string {
@@ -57,7 +63,7 @@ export function setPlaygroundApiChannelTarget(target: string, purpose: Playgroun
 
 export function getProxyRequestHeaders(purpose: PlaygroundApiPurpose = 'image'): Record<string, string> {
   return {
-    'X-YY-API-Target': getPlaygroundApiChannelTarget(purpose),
+    'X-YY-API-Target': getPlaygroundApiResolvedTarget(purpose),
     'X-YY-API-Purpose': purpose,
   }
 }

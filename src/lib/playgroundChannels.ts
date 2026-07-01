@@ -134,6 +134,10 @@ export function getPlaygroundModelChannelTarget(channel: PlaygroundModelChannel)
   return normalizePlaygroundBaseUrl(channel.baseUrl)
 }
 
+export function getPlaygroundModelChannelRef(channel: PlaygroundModelChannel): string {
+  return channel.id
+}
+
 export function findPlaygroundModelChannelByTarget(target: string): PlaygroundModelChannel | null {
   const normalizedTarget = normalizePlaygroundBaseUrl(target)
   return getPlaygroundModelChannels().find((channel) => {
@@ -143,8 +147,13 @@ export function findPlaygroundModelChannelByTarget(target: string): PlaygroundMo
   }) ?? null
 }
 
+export function resolvePlaygroundModelChannelTarget(target: string): string {
+  const channel = findPlaygroundModelChannelByTarget(target)
+  return channel ? getPlaygroundModelChannelTarget(channel) : normalizePlaygroundBaseUrl(target)
+}
+
 export function getDefaultPlaygroundModelChannelTarget(): string {
-  return getPlaygroundModelChannelTarget(getPlaygroundModelChannels()[0] ?? DEFAULT_PLAYGROUND_MODEL_CHANNELS[0])
+  return getPlaygroundModelChannelRef(getPlaygroundModelChannels()[0] ?? DEFAULT_PLAYGROUND_MODEL_CHANNELS[0])
 }
 
 export function getPlaygroundModelChannelLabel(target: string): string {

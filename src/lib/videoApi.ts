@@ -10,7 +10,7 @@
 // channel, otherwise the create call fails with "invalid api platform: 48".
 
 import { useStore } from '../store'
-import { buildApiUrl, getPlaygroundApiChannelTarget, getProxyRequestHeaders, readClientDevProxyConfig, shouldUseApiProxy } from './devProxy'
+import { buildApiUrl, getPlaygroundApiResolvedTarget, getProxyRequestHeaders, readClientDevProxyConfig, shouldUseApiProxy } from './devProxy'
 import { dataUrlToBlob } from './canvasImage'
 import type { ApiProfile } from '../types'
 
@@ -51,7 +51,7 @@ function getActiveProfile(): ApiProfile {
   if (!profile) throw new Error('未找到可用的 API 配置')
   return {
     ...profile,
-    baseUrl: getPlaygroundApiChannelTarget('video'),
+    baseUrl: getPlaygroundApiResolvedTarget('video'),
   }
 }
 

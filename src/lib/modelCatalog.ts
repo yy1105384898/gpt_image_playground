@@ -12,8 +12,10 @@ import {
 } from './devProxy'
 import {
   findPlaygroundModelChannelByTarget,
+  getPlaygroundModelChannelRef,
   getPlaygroundModelChannelTarget,
   getPlaygroundModelChannels,
+  resolvePlaygroundModelChannelTarget,
 } from './playgroundChannels'
 import { getStoredPlaygroundPurposeConfig } from './playgroundPurposeConfig'
 import { getTokenVaultItems } from './tokenVault'
@@ -146,12 +148,13 @@ function tokenForTargetPurpose(target: string, purpose: PlaygroundApiPurpose): s
 
 async function fetchChannelModels(target: string, purpose: PlaygroundApiPurpose): Promise<string[]> {
   const profile = profileForPurpose(purpose)
+  const apiTarget = resolvePlaygroundModelChannelTarget(target)
   const auth = authHeader(tokenForTargetPurpose(target, purpose) || profile?.apiKey || '')
   const proxyConfig = readClientDevProxyConfig()
   const useApiProxy = shouldUseApiProxy(profile?.apiProxy ?? true, proxyConfig)
-  const url = buildApiUrl(target, 'models', proxyConfig, useApiProxy)
+  const url = buildApiUrl(apiTarget, 'models', proxyConfig, useApiProxy)
   const headers: Record<string, string> = {
-    'X-YY-API-Target': target,
+    'X-YY-API-Target': apiTarget,
     'X-YY-API-Purpose': purpose,
   }
   if (auth) headers.Authorization = auth
@@ -177,7 +180,7 @@ async function fetchChannelModels(target: string, purpose: PlaygroundApiPurpose)
         body: JSON.stringify({
           connection_mode: 'custom',
           model_kind: purpose,
-          api_url: target,
+          api_url: apiTarget,
           api_key: auth.replace(/^Bearer\s+/i, ''),
         }),
       })
@@ -242,7 +245,7 @@ export async function getModelGroups(purpose: PlaygroundApiPurpose, force = fals
     const channels = getPlaygroundModelChannels()
     const results = await Promise.all(
       channels.map(async (channel) => {
-        const target = getPlaygroundModelChannelTarget(channel)
+        const target = getPlaygroundModelChannelRef(channel)
         try {
           const allModels = await getChannelModels(target, purpose, force)
           const selected = getSelectedModels(target, purpose)

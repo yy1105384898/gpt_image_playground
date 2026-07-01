@@ -36,13 +36,16 @@ import { getChannelModels, getDefaultSelectedModels, getSelectedModels, invalida
 import { getStoredPlaygroundPurposeConfig, savePlaygroundPurposeConfig } from '../lib/playgroundPurposeConfig'
 import {
   createPlaygroundModelChannel,
+  getPlaygroundModelChannelRef,
   getPlaygroundModelChannelTarget,
   getPlaygroundModelChannels,
   savePlaygroundModelChannels,
+  resolvePlaygroundModelChannelTarget,
   type PlaygroundApiFormat,
   type PlaygroundModelChannel,
 } from '../lib/playgroundChannels'
 import Select from './Select'
+import ModelMultiSelect from './ModelMultiSelect'
 import { Checkbox } from './Checkbox'
 import ViewportTooltip from './ViewportTooltip'
 import { ChevronDownIcon, CloseIcon, CopyIcon, PlusIcon, TrashIcon, GithubIcon, ExportIcon, ImportIcon, DragHandleIcon, LinkIcon, RefreshIcon } from './icons'
@@ -424,7 +427,6 @@ export default function SettingsModal() {
   const [activeTab, setActiveTab] = useState<SettingsTab>('api')
   const [apiConfigTab, setApiConfigTab] = useState<'channels' | 'models'>('channels')
   const [modelChannels, setModelChannels] = useState<PlaygroundModelChannel[]>(getPlaygroundModelChannels)
-  const [channelModelInputs, setChannelModelInputs] = useState<Record<string, string>>({})
   const [loadingChannelId, setLoadingChannelId] = useState<string>('')
   const [apiChannelTargets, setApiChannelTargets] = useState(() => ({
     text: getPlaygroundApiChannelTarget('text'),
@@ -479,7 +481,7 @@ export default function SettingsModal() {
       id: SIMPLIFIED_TEXT_PROFILE_ID,
       name: '文本模型',
       provider: 'openai',
-      baseUrl: textChannel,
+      baseUrl: resolvePlaygroundModelChannelTarget(textChannel),
       apiKey: textConfig.apiKey,
       model: textConfig.model || DEFAULT_RESPONSES_MODEL,
       timeout: previousTextProfile?.timeout ?? active.timeout,
@@ -493,7 +495,7 @@ export default function SettingsModal() {
       id: SIMPLIFIED_IMAGE_PROFILE_ID,
       name: '生图模型',
       provider: 'openai',
-      baseUrl: imageChannel,
+      baseUrl: resolvePlaygroundModelChannelTarget(imageChannel),
       apiKey: imageConfig.apiKey,
       model: imageConfig.model || DEFAULT_IMAGES_MODEL,
       timeout: previousImageProfile?.timeout ?? active.timeout,
@@ -511,7 +513,7 @@ export default function SettingsModal() {
       id: SIMPLIFIED_VIDEO_PROFILE_ID,
       name: '视频模型',
       provider: 'openai',
-      baseUrl: videoChannel,
+      baseUrl: resolvePlaygroundModelChannelTarget(videoChannel),
       apiKey: videoConfig.apiKey,
       model: videoConfig.model || SIMPLIFIED_VIDEO_DEFAULT_MODEL,
       timeout: previousVideoProfile?.timeout ?? active.timeout,
@@ -549,42 +551,12 @@ export default function SettingsModal() {
     video: simplifiedVideoProfile,
   }
   const selectedApiChannelTarget = apiChannelTargets.image || getPlaygroundApiChannelTarget('image')
-  const channelTarget = (channel: PlaygroundModelChannel) => getPlaygroundModelChannelTarget(channel)
+  const channelTarget = (channel: PlaygroundModelChannel) => getPlaygroundModelChannelRef(channel)
+  const channelApiTarget = (channel: PlaygroundModelChannel) => getPlaygroundModelChannelTarget(channel)
+  const findChannelByRef = (target: string) => modelChannels.find((channel) => channel.id === target || channelApiTarget(channel) === target)
   const getPurposeChannelTarget = (purpose: PlaygroundApiPurpose) => apiChannelTargets[purpose] || getPlaygroundApiChannelTarget(purpose)
   const getPurposeModelPickerKey = (purpose: PlaygroundApiPurpose) => `${purpose}:${getPurposeChannelTarget(purpose)}`
   const getPurposeSelectedModels = (purpose: PlaygroundApiPurpose, target = getPurposeChannelTarget(purpose)) => getSelectedModels(target, purpose)
-  const getPurposeAllModels = (purpose: PlaygroundApiPurpose, model = '') => {
-    const models = modelChannels.flatMap((channel) => {
-      const target = channelTarget(channel)
-      const pickerModels = modelPickerState[`${purpose}:${target}`]?.models ?? []
-      return [...channel.models, ...pickerModels]
-    })
-    return uniqueModelOptions([
-      ...models,
-      model,
-      DEFAULT_SIMPLIFIED_MODELS[purpose],
-    ])
-  }
-  const getPurposeModelOptions = (purpose: PlaygroundApiPurpose, model: string, target = getPurposeChannelTarget(purpose)) => {
-    const pickerModels = modelPickerState[`${purpose}:${target}`]?.models ?? []
-    const selectedModels = getPurposeSelectedModels(purpose, target)
-    return uniqueModelOptions([
-      ...pickerModels,
-      ...selectedModels,
-      ...(modelChannels.find((channel) => channelTarget(channel) === target)?.models ?? []),
-      model,
-      DEFAULT_SIMPLIFIED_MODELS[purpose],
-    ])
-  }
-  const getPurposeDefaultModelOptions = (purpose: PlaygroundApiPurpose, model: string) => {
-    const selectedModels = getPurposeSelectedModels(purpose)
-    return uniqueModelOptions(selectedModels.length ? selectedModels : [model, DEFAULT_SIMPLIFIED_MODELS[purpose]])
-  }
-  const getPurposeEffectiveDefaultModel = (purpose: PlaygroundApiPurpose, model: string) => {
-    const selectedModels = getPurposeSelectedModels(purpose)
-    if (!selectedModels.length || selectedModels.includes(model)) return model || DEFAULT_SIMPLIFIED_MODELS[purpose]
-    return selectedModels[0]
-  }
   const defaultProviderOrder = ['openai', 'fal', ...draft.customProviders.map(p => p.id)]
   const providerOrder = draft.providerOrder || defaultProviderOrder
 
@@ -899,6 +871,7 @@ export default function SettingsModal() {
     const baseDraft = ensureSimplifiedProfiles(draft)
     const purpose = SIMPLIFIED_PROFILE_PURPOSES[profileId]
     const target = purpose ? (patch.baseUrl?.trim() || getPurposeChannelTarget(purpose)) : selectedApiChannelTarget
+    const resolvedTarget = purpose ? resolvePlaygroundModelChannelTarget(target) : target
     if (purpose) {
       saveStoredPurposeConfig(target, purpose, {
         apiKey: patch.apiKey,
@@ -907,7 +880,7 @@ export default function SettingsModal() {
     }
     const nextDraft = normalizeSettings({
       ...baseDraft,
-      profiles: baseDraft.profiles.map((profile) => profile.id === profileId ? { ...profile, ...patch, baseUrl: target } : profile),
+      profiles: baseDraft.profiles.map((profile) => profile.id === profileId ? { ...profile, ...patch, baseUrl: resolvedTarget } : profile),
       activeProfileId: SIMPLIFIED_IMAGE_PROFILE_ID,
       agentApiConfigMode: 'hybrid',
       agentTextProfileId: SIMPLIFIED_TEXT_PROFILE_ID,
@@ -929,7 +902,7 @@ export default function SettingsModal() {
         ? {
             ...profile,
             provider: 'openai',
-            baseUrl: target,
+            baseUrl: resolvePlaygroundModelChannelTarget(target),
             apiKey: purposeConfig.apiKey,
             model: purposeConfig.model,
             apiProxy: true,
@@ -990,17 +963,6 @@ export default function SettingsModal() {
     saveChannels(modelChannels.filter((channel) => channel.id !== id))
   }
 
-  const addChannelModel = (channel: PlaygroundModelChannel) => {
-    const value = (channelModelInputs[channel.id] ?? '').trim()
-    if (!value) return
-    updateChannel(channel.id, { models: [...channel.models, value] })
-    setChannelModelInputs((inputs) => ({ ...inputs, [channel.id]: '' }))
-  }
-
-  const removeChannelModel = (channel: PlaygroundModelChannel, model: string) => {
-    updateChannel(channel.id, { models: channel.models.filter((item) => item !== model) })
-  }
-
   const refreshChannelModels = async (channel: PlaygroundModelChannel) => {
     const target = channelTarget(channel)
     if (!target || !channel.apiKey.trim()) {
@@ -1010,18 +972,18 @@ export default function SettingsModal() {
     setLoadingChannelId(channel.id)
     try {
       const purposeResults = await Promise.all(MODEL_CONFIG_GROUPS.map(async (group) => {
-        const models = await getChannelModels(target, group.purpose, true)
+        const models = await getChannelModels(channel.id, group.purpose, true)
         return [group.purpose, models] as const
       }))
       const models = uniqueModelOptions(purposeResults.flatMap(([, models]) => models))
       updateChannel(channel.id, { models })
       for (const [purpose, purposeModels] of purposeResults) {
-        const selected = getSelectedModels(target, purpose)
+        const selected = getSelectedModels(channel.id, purpose)
         if (!selected.length) {
           const suggested = getDefaultSelectedModels(purposeModels, purpose)
-          if (suggested.length) setSelectedModels(target, purpose, suggested)
+          if (suggested.length) setSelectedModels(channel.id, purpose, suggested)
         }
-        setModelPickerState((state) => ({ ...state, [`${purpose}:${target}`]: { loading: false, models: purposeModels } }))
+        setModelPickerState((state) => ({ ...state, [`${purpose}:${channel.id}`]: { loading: false, models: purposeModels } }))
       }
       showToast(`${channel.name || '渠道'} 模型列表已更新`, 'success')
     } catch {
@@ -1040,18 +1002,17 @@ export default function SettingsModal() {
     setLoadingChannelId('all')
     try {
       const entries = await Promise.all(runnable.map(async (channel) => {
-        const target = channelTarget(channel)
         const purposeResults = await Promise.all(MODEL_CONFIG_GROUPS.map(async (group) => {
-          const models = await getChannelModels(target, group.purpose, true)
+          const models = await getChannelModels(channel.id, group.purpose, true)
           return [group.purpose, models] as const
         }))
         for (const [purpose, purposeModels] of purposeResults) {
-          const selected = getSelectedModels(target, purpose)
+          const selected = getSelectedModels(channel.id, purpose)
           if (!selected.length) {
             const suggested = getDefaultSelectedModels(purposeModels, purpose)
-            if (suggested.length) setSelectedModels(target, purpose, suggested)
+            if (suggested.length) setSelectedModels(channel.id, purpose, suggested)
           }
-          setModelPickerState((state) => ({ ...state, [`${purpose}:${target}`]: { loading: false, models: purposeModels } }))
+          setModelPickerState((state) => ({ ...state, [`${purpose}:${channel.id}`]: { loading: false, models: purposeModels } }))
         }
         return [channel.id, uniqueModelOptions(purposeResults.flatMap(([, models]) => models))] as const
       }))
@@ -1120,36 +1081,6 @@ export default function SettingsModal() {
       })
   }
 
-  const togglePurposeModel = (purpose: PlaygroundApiPurpose, model: string) => {
-    const target = getPurposeChannelTarget(purpose)
-    const profileId = SIMPLIFIED_PROFILE_IDS_BY_PURPOSE[purpose]
-    const currentModel = baseDraftProfileModel(draft, profileId)
-    const selected = new Set(getSelectedModels(target, purpose))
-    if (selected.has(model)) {
-      if (selected.size <= 1) {
-        showToast('至少保留一个工作台模型', 'info')
-        return
-      }
-      selected.delete(model)
-    } else {
-      selected.add(model)
-    }
-    const nextSelected = Array.from(selected)
-    setSelectedModels(target, purpose, nextSelected)
-    if (nextSelected.length && !nextSelected.includes(currentModel)) {
-      updateSimplifiedProfile(profileId, { model: nextSelected[0] }, true)
-    }
-    setModelPickerVersion((version) => version + 1)
-  }
-
-  const updatePurposeDefaultModel = (purpose: PlaygroundApiPurpose, profile: ApiProfile, model: string) => {
-    const target = getPurposeChannelTarget(purpose)
-    const selected = getSelectedModels(target, purpose)
-    if (!selected.includes(model)) setSelectedModels(target, purpose, [...selected, model])
-    updateSimplifiedProfile(profile.id, { model }, true)
-    setModelPickerVersion((version) => version + 1)
-  }
-
   const purposeModelEntries = (purpose: PlaygroundApiPurpose, currentModel = '') => {
     const entries = modelChannels.flatMap((channel) => {
       const target = channelTarget(channel)
@@ -1174,16 +1105,46 @@ export default function SettingsModal() {
 
   const modelOptionValue = (target: string, model: string) => `${target}${MODEL_OPTION_SEPARATOR}${model}`
 
-  const parseModelOptionValue = (value: string) => {
-    const [target, model] = value.split(MODEL_OPTION_SEPARATOR)
+  const parseModelOptionValue = (value: string, fallbackTarget = getPurposeChannelTarget('image')) => {
+    const separatorIndex = value.indexOf(MODEL_OPTION_SEPARATOR)
+    if (separatorIndex < 0) return { target: fallbackTarget, model: value }
+    const target = value.slice(0, separatorIndex)
+    const model = value.slice(separatorIndex + MODEL_OPTION_SEPARATOR.length)
     return { target, model }
   }
 
-  const setPurposeModelEnabled = (purpose: PlaygroundApiPurpose, target: string, model: string, enabled: boolean) => {
-    const selected = new Set(getSelectedModels(target, purpose))
-    if (enabled) selected.add(model)
-    else selected.delete(model)
-    setSelectedModels(target, purpose, Array.from(selected))
+  const purposeModelOptions = (purpose: PlaygroundApiPurpose, currentModel = '') => {
+    return purposeModelEntries(purpose, currentModel).map((entry) => ({
+      label: entry.label,
+      value: modelOptionValue(entry.target, entry.model),
+    }))
+  }
+
+  const selectedPurposeModelValues = (purpose: PlaygroundApiPurpose) => {
+    return Array.from(new Set(modelChannels.flatMap((channel) => {
+      const target = channelTarget(channel)
+      return getSelectedModels(target, purpose).map((model) => modelOptionValue(target, model))
+    })))
+  }
+
+  const updatePurposeSelectedModelValues = (purpose: PlaygroundApiPurpose, values: string[]) => {
+    const grouped = new Map<string, string[]>()
+    const activeTarget = getPurposeChannelTarget(purpose)
+    values.forEach((value) => {
+      const { target, model } = parseModelOptionValue(value, activeTarget)
+      if (!target || !model) return
+      grouped.set(target, uniqueModelOptions([...(grouped.get(target) ?? []), model]))
+    })
+    modelChannels.forEach((channel) => {
+      const target = channelTarget(channel)
+      setSelectedModels(target, purpose, grouped.get(target) ?? [])
+    })
+    const profile = profileByPurpose[purpose]
+    const currentSelected = grouped.get(activeTarget) ?? []
+    if (profile && !currentSelected.includes(profile.model)) {
+      const nextValue = values[0]
+      if (nextValue) updatePurposeDefaultModelFromEntry(purpose, nextValue)
+    }
     setModelPickerVersion((version) => version + 1)
   }
 
@@ -1192,17 +1153,19 @@ export default function SettingsModal() {
     if (!profile) return
     const { target, model } = parseModelOptionValue(encoded)
     if (!target || !model) return
+    const channel = findChannelByRef(target)
+    const apiKey = channel?.apiKey ?? profile.apiKey
     setPlaygroundApiChannelTarget(target, purpose)
     setApiChannelTargets((targets) => ({ ...targets, [purpose]: target }))
     saveStoredPurposeConfig(target, purpose, {
-      apiKey: modelChannels.find((channel) => channelTarget(channel) === target)?.apiKey ?? profile.apiKey,
+      apiKey,
       model,
     })
     const selected = getSelectedModels(target, purpose)
     if (!selected.includes(model)) setSelectedModels(target, purpose, [...selected, model])
     updateSimplifiedProfile(profile.id, {
       baseUrl: target,
-      apiKey: modelChannels.find((channel) => channelTarget(channel) === target)?.apiKey ?? profile.apiKey,
+      apiKey,
       model,
     }, true)
     setModelPickerVersion((version) => version + 1)
@@ -1951,51 +1914,14 @@ export default function SettingsModal() {
                               <div className="md:col-span-2">
                                 <div className="mb-1.5 flex items-center justify-between gap-2">
                                   <span className="block text-sm text-gray-600 dark:text-gray-300">模型列表</span>
-                                  <span className="truncate text-[11px] text-gray-400" title={target}>{target}</span>
+                                  <span className="truncate text-[11px] text-gray-400" title={channelApiTarget(channel)}>{channelApiTarget(channel)}</span>
                                 </div>
-                                <div className="rounded-xl border border-gray-200/70 bg-gray-50/80 p-2 dark:border-white/[0.08] dark:bg-black/20">
-                                  <div className="mb-2 flex gap-2">
-                                    <input
-                                      value={channelModelInputs[channel.id] ?? ''}
-                                      onChange={(event) => setChannelModelInputs((inputs) => ({ ...inputs, [channel.id]: event.target.value }))}
-                                      onKeyDown={(event) => {
-                                        if (event.key !== 'Enter') return
-                                        event.preventDefault()
-                                        addChannelModel(channel)
-                                      }}
-                                      placeholder="输入模型名，或点击拉取模型"
-                                      className="min-w-0 flex-1 rounded-lg border border-gray-200/80 bg-white px-3 py-2 text-xs text-gray-700 outline-none transition placeholder:text-gray-400 focus:border-blue-400 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-100"
-                                    />
-                                    <button
-                                      type="button"
-                                      onClick={() => addChannelModel(channel)}
-                                      className="rounded-lg bg-gray-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-black dark:bg-white dark:text-black dark:hover:bg-gray-200"
-                                    >
-                                      添加
-                                    </button>
-                                  </div>
-                                  {channel.models.length ? (
-                                    <div className="flex max-h-32 flex-wrap gap-1.5 overflow-y-auto pr-1 custom-scrollbar">
-                                      {channel.models.map((model) => (
-                                        <span key={model} className="inline-flex max-w-full items-center gap-1 rounded-full border border-gray-200/70 bg-white px-2 py-1 text-xs text-gray-600 dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-gray-300">
-                                          <span className="max-w-[260px] truncate" title={model}>{model}</span>
-                                          <button
-                                            type="button"
-                                            onClick={() => removeChannelModel(channel, model)}
-                                            className="rounded-full p-0.5 text-gray-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-500/10 dark:hover:text-red-300"
-                                            aria-label="移除模型"
-                                          >
-                                            <CloseIcon className="h-3 w-3" />
-                                          </button>
-                                        </span>
-                                      ))}
-                                    </div>
-                                  ) : (
-                                    <div className="rounded-lg border border-dashed border-gray-200 px-3 py-4 text-center text-xs text-gray-400 dark:border-white/[0.08]">
-                                      暂无模型，手动输入或点击拉取模型。
-                                    </div>
-                                  )}
-                                </div>
+                                <ModelMultiSelect
+                                  value={channel.models}
+                                  onChange={(models) => updateChannel(channel.id, { models })}
+                                  placeholder="输入模型名，或点击拉取模型"
+                                  className="w-full"
+                                />
                               </div>
                             </div>
                           </section>
@@ -2014,78 +1940,56 @@ export default function SettingsModal() {
                       </div>
                     </div>
 
-                    <div className="grid gap-4 xl:grid-cols-3">
+                    <div className="grid gap-4 md:grid-cols-2">
                       {MODEL_CONFIG_GROUPS.map((group) => {
                         const profile = profileByPurpose[group.purpose]
-                        const entries = purposeModelEntries(group.purpose, profile?.model ?? '')
-                        const activeTarget = getPurposeChannelTarget(group.purpose)
-                        const activeValue = modelOptionValue(activeTarget, profile?.model || DEFAULT_SIMPLIFIED_MODELS[group.purpose])
+                        const currentModel = profile?.model || DEFAULT_SIMPLIFIED_MODELS[group.purpose]
                         return (
-                          <section key={group.purpose} className="rounded-2xl border border-gray-200/70 bg-white/85 p-4 shadow-sm dark:border-white/[0.08] dark:bg-white/[0.03]">
-                            <div className="mb-4 flex items-start justify-between gap-3">
-                              <div>
-                                <div className="text-sm font-bold text-gray-900 dark:text-gray-50">{group.label}模型</div>
-                                <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">{getTokenVaultChannelLabel(activeTarget)}</div>
-                              </div>
-                              <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-600 dark:bg-white/[0.08] dark:text-gray-300">
-                                {group.badge}
-                              </span>
+                          <div key={group.purpose}>
+                            <div className="mb-1.5 flex items-center justify-between gap-2">
+                              <span className="text-sm font-semibold text-gray-600 dark:text-gray-300">{group.optionsLabel}</span>
+                              <button
+                                type="button"
+                                onClick={() => setApiConfigTab('channels')}
+                                className="text-xs font-semibold text-blue-600 hover:text-blue-700 dark:text-blue-300 dark:hover:text-blue-200"
+                              >
+                                去渠道设置
+                              </button>
                             </div>
+                            <ModelMultiSelect
+                              value={selectedPurposeModelValues(group.purpose)}
+                              options={purposeModelOptions(group.purpose, currentModel)}
+                              placeholder={modelChannels.some((channel) => channel.models.length) ? `请选择或输入${group.optionsLabel}` : '先到渠道里填写或拉取模型'}
+                              onChange={(values) => updatePurposeSelectedModelValues(group.purpose, values)}
+                            />
+                          </div>
+                        )
+                      })}
+                    </div>
 
-                            <div className="space-y-3">
-                              <div>
-                                <div className="mb-1.5 flex items-center justify-between gap-2">
-                                  <span className="text-xs font-semibold text-gray-600 dark:text-gray-300">{group.optionsLabel}</span>
-                                  <button
-                                    type="button"
-                                    onClick={() => setApiConfigTab('channels')}
-                                    className="text-xs font-semibold text-blue-600 hover:text-blue-700 dark:text-blue-300 dark:hover:text-blue-200"
-                                  >
-                                    去渠道设置
-                                  </button>
-                                </div>
-                                <div className="max-h-48 space-y-1 overflow-y-auto rounded-xl border border-gray-200/70 bg-gray-50/80 p-2 pr-1 custom-scrollbar dark:border-white/[0.08] dark:bg-black/20">
-                                  {entries.length ? entries.map((entry) => {
-                                    const checked = getSelectedModels(entry.target, group.purpose).includes(entry.model)
-                                    const isDefault = activeTarget === entry.target && profile?.model === entry.model
-                                    return (
-                                      <label key={`${entry.target}-${entry.model}`} className={`flex min-w-0 items-center gap-2 rounded-lg px-2.5 py-2 text-xs transition ${checked ? 'bg-blue-50 text-gray-800 dark:bg-blue-500/10 dark:text-gray-100' : 'text-gray-600 hover:bg-white dark:text-gray-300 dark:hover:bg-white/[0.05]'}`}>
-                                        <input
-                                          type="checkbox"
-                                          checked={checked}
-                                          onChange={(event) => setPurposeModelEnabled(group.purpose, entry.target, entry.model, event.target.checked)}
-                                          className="h-3.5 w-3.5 shrink-0 rounded border-gray-300 text-blue-500"
-                                        />
-                                        <span className="min-w-0 flex-1 break-all leading-4" title={entry.label}>{entry.label}</span>
-                                        {isDefault && (
-                                          <span className="shrink-0 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-700 dark:bg-blue-500/15 dark:text-blue-200">
-                                            默认
-                                          </span>
-                                        )}
-                                      </label>
-                                    )
-                                  }) : (
-                                    <div className="rounded-lg border border-dashed border-gray-200 px-3 py-4 text-center text-xs text-gray-400 dark:border-white/[0.08]">
-                                      先到渠道里填写或拉取模型。
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-
-                              <div>
-                                <div className="mb-1.5 text-xs font-semibold text-gray-600 dark:text-gray-300">{group.defaultLabel}</div>
-                                <Select
-                                  value={activeValue}
-                                  onChange={(value) => updatePurposeDefaultModelFromEntry(group.purpose, String(value))}
-                                  options={(entries.length ? entries : [{ target: activeTarget, model: profile?.model || DEFAULT_SIMPLIFIED_MODELS[group.purpose], label: profile?.model || DEFAULT_SIMPLIFIED_MODELS[group.purpose] }]).map((entry) => ({
-                                    label: entry.label,
-                                    value: modelOptionValue(entry.target, entry.model),
-                                  }))}
-                                  className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
-                                />
-                              </div>
-                            </div>
-                          </section>
+                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                      {MODEL_CONFIG_GROUPS.map((group) => {
+                        const profile = profileByPurpose[group.purpose]
+                        const activeTarget = getPurposeChannelTarget(group.purpose)
+                        const fallbackModel = profile?.model || DEFAULT_SIMPLIFIED_MODELS[group.purpose]
+                        const activeValue = modelOptionValue(activeTarget, fallbackModel)
+                        const selectedValues = selectedPurposeModelValues(group.purpose)
+                        const optionMap = new Map(purposeModelOptions(group.purpose, fallbackModel).map((option) => [option.value, option.label]))
+                        const fallbackValues = selectedValues.includes(activeValue) || selectedValues.length ? selectedValues : [activeValue]
+                        const defaultOptions = fallbackValues.map((value) => ({
+                          value,
+                          label: optionMap.get(value) ?? parseModelOptionValue(value, activeTarget).model,
+                        }))
+                        return (
+                          <div key={group.defaultLabel}>
+                            <div className="mb-1.5 text-sm font-semibold text-gray-600 dark:text-gray-300">{group.defaultLabel}</div>
+                            <Select
+                              value={defaultOptions.some((option) => option.value === activeValue) ? activeValue : defaultOptions[0]?.value ?? activeValue}
+                              onChange={(value) => updatePurposeDefaultModelFromEntry(group.purpose, String(value))}
+                              options={defaultOptions}
+                              className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                            />
+                          </div>
                         )
                       })}
                     </div>

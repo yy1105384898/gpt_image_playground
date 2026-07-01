@@ -2,10 +2,11 @@ import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { createChatMessage, DEFAULT_CHAT_MODEL, useChatStore, type ChatConversation } from '../chatStore'
 import { useStore } from '../store'
 import { callTextChatApi } from '../lib/chatApi'
-import { getPlaygroundApiChannelTarget, setPlaygroundApiChannelTarget } from '../lib/devProxy'
+import { getPlaygroundApiChannelTarget, getPlaygroundApiResolvedTarget, setPlaygroundApiChannelTarget } from '../lib/devProxy'
 import { getModelGroups } from '../lib/modelCatalog'
 import { savePlaygroundPurposeConfig } from '../lib/playgroundPurposeConfig'
 import { normalizeSettings } from '../lib/apiProfiles'
+import { findPlaygroundModelChannelByTarget, resolvePlaygroundModelChannelTarget } from '../lib/playgroundChannels'
 import ModelSelect from './ModelSelect'
 import MarkdownRenderer from './MarkdownRenderer'
 import Select from './Select'
@@ -106,7 +107,7 @@ export default function ChatWorkspace() {
       const finalText = await callTextChatApi({
         profile: {
           ...profile,
-          baseUrl: getPlaygroundApiChannelTarget('text'),
+          baseUrl: getPlaygroundApiResolvedTarget('text'),
         },
         model: activeConversation?.model || model || profile.model || DEFAULT_CHAT_MODEL,
         messages: nextMessages,
@@ -189,8 +190,22 @@ export default function ChatWorkspace() {
               target={activeTarget}
               fallbackModels={[DEFAULT_CHAT_MODEL, 'gpt-4.1-mini', 'gpt-4o-mini']}
               onSelect={(target, nextModel) => {
+                const apiKey = findPlaygroundModelChannelByTarget(target)?.apiKey
                 if (target) setPlaygroundApiChannelTarget(target, 'text')
-                if (target) savePlaygroundPurposeConfig(target, 'text', { model: nextModel })
+                if (target) savePlaygroundPurposeConfig(target, 'text', { apiKey, model: nextModel })
+                if (target) {
+                  const state = useStore.getState()
+                  const profileId = state.settings.profiles.some((profile) => profile.id === TEXT_PROFILE_ID)
+                    ? TEXT_PROFILE_ID
+                    : getTextProfile()?.id
+                  state.setSettings({
+                    profiles: state.settings.profiles.map((profile) =>
+                      profile.id === profileId
+                        ? { ...profile, model: nextModel, baseUrl: resolvePlaygroundModelChannelTarget(target), apiKey: apiKey ?? profile.apiKey }
+                        : profile,
+                    ),
+                  })
+                }
                 setModel(nextModel, target)
               }}
               className="yy-model-select h-[42px] w-[150px] rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 text-sm text-gray-100 outline-none transition hover:bg-white/[0.08]"
