@@ -4,7 +4,7 @@ import { useStore } from '../store'
 import { callTextChatApi } from '../lib/chatApi'
 import { getPlaygroundApiChannelTarget, getPlaygroundApiResolvedTarget, setPlaygroundApiChannelTarget } from '../lib/devProxy'
 import { getModelGroups } from '../lib/modelCatalog'
-import { savePlaygroundPurposeConfig } from '../lib/playgroundPurposeConfig'
+import { getStoredPlaygroundPurposeConfig, savePlaygroundPurposeConfig } from '../lib/playgroundPurposeConfig'
 import { normalizeSettings } from '../lib/apiProfiles'
 import { findPlaygroundModelChannelByTarget, resolvePlaygroundModelChannelTarget } from '../lib/playgroundChannels'
 import ModelSelect from './ModelSelect'
@@ -190,7 +190,9 @@ export default function ChatWorkspace() {
               target={activeTarget}
               fallbackModels={[DEFAULT_CHAT_MODEL, 'gpt-4.1-mini', 'gpt-4o-mini']}
               onSelect={(target, nextModel) => {
-                const apiKey = findPlaygroundModelChannelByTarget(target)?.apiKey
+                const channelApiKey = findPlaygroundModelChannelByTarget(target)?.apiKey
+                const storedApiKey = getStoredPlaygroundPurposeConfig(target, 'text').apiKey
+                const apiKey = storedApiKey?.trim() || getTextProfile()?.apiKey || channelApiKey || ''
                 if (target) setPlaygroundApiChannelTarget(target, 'text')
                 if (target) savePlaygroundPurposeConfig(target, 'text', { apiKey, model: nextModel })
                 if (target) {
@@ -208,7 +210,7 @@ export default function ChatWorkspace() {
                 }
                 setModel(nextModel, target)
               }}
-              className="yy-model-select h-[42px] w-[150px] rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 text-sm text-gray-100 outline-none transition hover:bg-white/[0.08]"
+              className="yy-model-select h-[42px] min-w-[150px] w-[150px] rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 text-sm text-gray-100 outline-none transition hover:bg-white/[0.08] sm:w-[180px]"
             />
             <button type="button" onClick={refreshModels} className="flex h-[42px] w-[42px] items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.04] text-gray-400 transition hover:bg-white/[0.08] hover:text-white" aria-label="刷新模型">
               <RefreshIcon className="h-4 w-4" />

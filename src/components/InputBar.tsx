@@ -10,7 +10,7 @@ import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { getSafeBoundingClientRect } from '../lib/domRect'
 import { getPlaygroundApiChannelTarget, shouldUseApiProxy, setPlaygroundApiChannelTarget } from '../lib/devProxy'
 import { findPlaygroundModelChannelByTarget, resolvePlaygroundModelChannelTarget } from '../lib/playgroundChannels'
-import { savePlaygroundPurposeConfig } from '../lib/playgroundPurposeConfig'
+import { getStoredPlaygroundPurposeConfig, savePlaygroundPurposeConfig } from '../lib/playgroundPurposeConfig'
 import { collectAgentRoundOutputImageSlots } from '../lib/agentImageReferences'
 import { useHintTooltip } from '../hooks/useHintTooltip'
 import { downloadImageEntriesAsZip, downloadImageIds, formatExportFileTime, getTaskOutputImageZipEntries } from '../lib/downloadImages'
@@ -1930,7 +1930,9 @@ export default function InputBar() {
       onOpenSizePicker={() => setShowSizePicker(true)}
       modelTarget={getPlaygroundApiChannelTarget('image')}
       onModelChange={(target, model) => {
-        const apiKey = findPlaygroundModelChannelByTarget(target)?.apiKey
+        const channelApiKey = findPlaygroundModelChannelByTarget(target)?.apiKey
+        const storedApiKey = getStoredPlaygroundPurposeConfig(target, 'image').apiKey
+        const apiKey = storedApiKey?.trim() || activeProfile.apiKey || channelApiKey || ''
         setPlaygroundApiChannelTarget(target, 'image')
         savePlaygroundPurposeConfig(target, 'image', { apiKey, model })
         const imageProfileId = settings.profiles.some((p) => p.id === 'yy-image-profile')
@@ -1938,7 +1940,7 @@ export default function InputBar() {
           : activeProfile.id
         setSettings({
           profiles: settings.profiles.map((p) =>
-            p.id === imageProfileId ? { ...p, model, baseUrl: resolvePlaygroundModelChannelTarget(target), apiKey: apiKey ?? p.apiKey } : p,
+            p.id === imageProfileId ? { ...p, model, baseUrl: resolvePlaygroundModelChannelTarget(target), apiKey } : p,
           ),
         })
       }}

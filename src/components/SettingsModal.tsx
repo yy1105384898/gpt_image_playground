@@ -1062,13 +1062,13 @@ export default function SettingsModal() {
         const fetchedModels = uniqueModelOptions(models)
         const selected = getSelectedModels(target, purpose)
         const actualModelSet = new Set(fetchedModels)
-        const sanitizedSelected = selected.filter((model) => actualModelSet.has(model))
+        const sanitizedSelected = selected.filter((model) => actualModelSet.has(model) && isModelForPurpose(model, purpose))
         if (sanitizedSelected.length !== selected.length) setSelectedModels(target, purpose, sanitizedSelected)
         const nextSelected = sanitizedSelected.length ? sanitizedSelected : getDefaultSelectedModels(fetchedModels, purpose)
         if (!sanitizedSelected.length) setSelectedModels(target, purpose, nextSelected)
         const profileId = SIMPLIFIED_PROFILE_IDS_BY_PURPOSE[purpose]
         const currentModel = baseDraftProfileModel(draft, profileId)
-        if (nextSelected.length && !nextSelected.includes(currentModel)) {
+        if (nextSelected.length && (!nextSelected.includes(currentModel) || !isModelForPurpose(currentModel, purpose))) {
           updateSimplifiedProfile(profileId, { model: nextSelected[0] }, true)
         }
         setModelPickerState((state) => ({ ...state, [key]: { loading: false, models: fetchedModels } }))
@@ -1086,14 +1086,14 @@ export default function SettingsModal() {
       const target = channelTarget(channel)
       const pickerModels = modelPickerState[`${purpose}:${target}`]?.models ?? []
       return uniqueModelOptions([...channel.models, ...pickerModels])
-        .filter((model) => model === currentModel || isModelForPurpose(model, purpose) || getSelectedModels(target, purpose).includes(model))
+        .filter((model) => isModelForPurpose(model, purpose))
         .map((model) => ({
           target,
           model,
           label: `${model}（${channel.name || '未命名渠道'}）`,
         }))
     })
-    if (currentModel && !entries.some((entry) => entry.target === getPurposeChannelTarget(purpose) && entry.model === currentModel)) {
+    if (currentModel && isModelForPurpose(currentModel, purpose) && !entries.some((entry) => entry.target === getPurposeChannelTarget(purpose) && entry.model === currentModel)) {
       entries.unshift({
         target: getPurposeChannelTarget(purpose),
         model: currentModel,
@@ -1132,7 +1132,7 @@ export default function SettingsModal() {
     const activeTarget = getPurposeChannelTarget(purpose)
     values.forEach((value) => {
       const { target, model } = parseModelOptionValue(value, activeTarget)
-      if (!target || !model) return
+      if (!target || !model || !isModelForPurpose(model, purpose)) return
       grouped.set(target, uniqueModelOptions([...(grouped.get(target) ?? []), model]))
     })
     modelChannels.forEach((channel) => {
@@ -1141,8 +1141,9 @@ export default function SettingsModal() {
     })
     const profile = profileByPurpose[purpose]
     const currentSelected = grouped.get(activeTarget) ?? []
-    if (profile && !currentSelected.includes(profile.model)) {
-      const nextValue = values[0]
+    if (profile && (!currentSelected.includes(profile.model) || !isModelForPurpose(profile.model, purpose))) {
+      const nextValue = Array.from(grouped.entries())
+        .flatMap(([target, models]) => models.map((model) => modelOptionValue(target, model)))[0]
       if (nextValue) updatePurposeDefaultModelFromEntry(purpose, nextValue)
     }
     setModelPickerVersion((version) => version + 1)
@@ -1153,8 +1154,13 @@ export default function SettingsModal() {
     if (!profile) return
     const { target, model } = parseModelOptionValue(encoded)
     if (!target || !model) return
+    if (!isModelForPurpose(model, purpose)) {
+      showToast('该模型不属于当前用途', 'error')
+      return
+    }
     const channel = findChannelByRef(target)
-    const apiKey = channel?.apiKey ?? profile.apiKey
+    const storedConfig = getStoredPlaygroundPurposeConfig(target, purpose)
+    const apiKey = storedConfig.apiKey?.trim() || getVaultTokenForPurpose(target, purpose) || profile.apiKey || channel?.apiKey || ''
     setPlaygroundApiChannelTarget(target, purpose)
     setApiChannelTargets((targets) => ({ ...targets, [purpose]: target }))
     saveStoredPurposeConfig(target, purpose, {
@@ -1971,22 +1977,30 @@ export default function SettingsModal() {
                       {MODEL_CONFIG_GROUPS.map((group) => {
                         const profile = profileByPurpose[group.purpose]
                         const activeTarget = getPurposeChannelTarget(group.purpose)
-                        const fallbackModel = profile?.model || DEFAULT_SIMPLIFIED_MODELS[group.purpose]
-                        const activeValue = modelOptionValue(activeTarget, fallbackModel)
+                        const profileModel = profile?.model || ''
+                        const fallbackModel = isModelForPurpose(profileModel, group.purpose)
+                          ? profileModel
+                          : DEFAULT_SIMPLIFIED_MODELS[group.purpose]
+                        const validFallbackModel = isModelForPurpose(fallbackModel, group.purpose) ? fallbackModel : ''
+                        const activeValue = validFallbackModel ? modelOptionValue(activeTarget, validFallbackModel) : ''
                         const selectedValues = selectedPurposeModelValues(group.purpose)
-                        const optionMap = new Map(purposeModelOptions(group.purpose, fallbackModel).map((option) => [option.value, option.label]))
-                        const fallbackValues = selectedValues.includes(activeValue) || selectedValues.length ? selectedValues : [activeValue]
+                        const optionMap = new Map(purposeModelOptions(group.purpose, validFallbackModel).map((option) => [option.value, option.label]))
+                        const fallbackValues = selectedValues.length ? selectedValues : activeValue ? [activeValue] : []
                         const defaultOptions = fallbackValues.map((value) => ({
                           value,
                           label: optionMap.get(value) ?? parseModelOptionValue(value, activeTarget).model,
                         }))
+                        const defaultValue = activeValue && defaultOptions.some((option) => option.value === activeValue)
+                          ? activeValue
+                          : defaultOptions[0]?.value ?? ''
                         return (
                           <div key={group.defaultLabel}>
                             <div className="mb-1.5 text-sm font-semibold text-gray-600 dark:text-gray-300">{group.defaultLabel}</div>
                             <Select
-                              value={defaultOptions.some((option) => option.value === activeValue) ? activeValue : defaultOptions[0]?.value ?? activeValue}
+                              value={defaultValue}
                               onChange={(value) => updatePurposeDefaultModelFromEntry(group.purpose, String(value))}
                               options={defaultOptions}
+                              disabled={!defaultOptions.length}
                               className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
                             />
                           </div>

@@ -3,7 +3,7 @@ import { useStore } from '../store'
 import { useVideoStore, type VideoTask } from '../videoStore'
 import { createVideo, fetchVideoContentObjectUrl, pollVideo, VIDEO_DURATIONS, VIDEO_ASPECTS, VIDEO_SIZES, type VideoMode } from '../lib/videoApi'
 import { getPlaygroundApiChannelTarget, setPlaygroundApiChannelTarget } from '../lib/devProxy'
-import { savePlaygroundPurposeConfig } from '../lib/playgroundPurposeConfig'
+import { getStoredPlaygroundPurposeConfig, savePlaygroundPurposeConfig } from '../lib/playgroundPurposeConfig'
 import { findPlaygroundModelChannelByTarget, resolvePlaygroundModelChannelTarget } from '../lib/playgroundChannels'
 import { fileToDataUrl } from '../lib/dataUrl'
 import { getAtImageQuery, getImageMentionLabel, getPromptMentionParts, getSelectedImageMentionLabel, insertImageMentionAtVisibleRange, replaceImageMentionsForApi, stripImageMentionMarkers } from '../lib/promptImageMentions'
@@ -1050,13 +1050,16 @@ export default function VideoWorkspace() {
                 value={params.model}
                 target={getPlaygroundApiChannelTarget('video')}
                 onSelect={(target, model) => {
-                  const apiKey = findPlaygroundModelChannelByTarget(target)?.apiKey
+                  const channelApiKey = findPlaygroundModelChannelByTarget(target)?.apiKey
+                  const videoProfile = useStore.getState().settings.profiles.find((profile) => profile.id === 'yy-video-profile')
+                  const storedApiKey = getStoredPlaygroundPurposeConfig(target, 'video').apiKey
+                  const apiKey = storedApiKey?.trim() || videoProfile?.apiKey || channelApiKey || ''
                   setPlaygroundApiChannelTarget(target, 'video')
                   savePlaygroundPurposeConfig(target, 'video', { apiKey, model })
                   useStore.getState().setSettings({
                     profiles: useStore.getState().settings.profiles.map((profile) =>
                       profile.id === 'yy-video-profile'
-                        ? { ...profile, model, baseUrl: resolvePlaygroundModelChannelTarget(target), apiKey: apiKey ?? profile.apiKey }
+                        ? { ...profile, model, baseUrl: resolvePlaygroundModelChannelTarget(target), apiKey }
                         : profile,
                     ),
                   })

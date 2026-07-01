@@ -88,7 +88,7 @@ function readSelectedModelsState(): SelectedModelsState {
 }
 
 export function getSelectedModels(target: string, purpose: PlaygroundApiPurpose): string[] {
-  return readSelectedModelsState()[target]?.[purpose]?.filter(Boolean) ?? []
+  return readSelectedModelsState()[target]?.[purpose]?.filter((model) => Boolean(model) && isModelForPurpose(model, purpose)) ?? []
 }
 
 export function hasSelectedModelsConfig(target: string, purpose: PlaygroundApiPurpose): boolean {
@@ -100,7 +100,7 @@ export function setSelectedModels(target: string, purpose: PlaygroundApiPurpose,
   const state = readSelectedModelsState()
   state[target] = {
     ...(state[target] ?? {}),
-    [purpose]: Array.from(new Set(models.filter(Boolean))),
+    [purpose]: Array.from(new Set(models.filter((model) => Boolean(model) && isModelForPurpose(model, purpose)))),
   }
   window.localStorage.setItem(SELECTED_MODELS_STORAGE_KEY, JSON.stringify(state))
   cache.delete(purpose)
@@ -133,8 +133,6 @@ function profileForPurpose(purpose: PlaygroundApiPurpose) {
 }
 
 function tokenForTargetPurpose(target: string, purpose: PlaygroundApiPurpose): string {
-  const channel = findPlaygroundModelChannelByTarget(target)
-  if (channel?.apiKey.trim()) return channel.apiKey
   const stored = getStoredPlaygroundPurposeConfig(target, purpose)
   if (stored.apiKey?.trim()) return stored.apiKey
   const items = getTokenVaultItems(target)
@@ -143,7 +141,11 @@ function tokenForTargetPurpose(target: string, purpose: PlaygroundApiPurpose): s
     : purpose === 'image'
       ? /生图|图片|image|images/i
       : /视频|video/i
-  return items.find((item) => matcher.test(item.name))?.token ?? (items.length === 1 ? items[0].token : '')
+  const matchedToken = items.find((item) => matcher.test(item.name))?.token
+  if (matchedToken) return matchedToken
+  if (items.length === 1) return items[0].token
+  const channel = findPlaygroundModelChannelByTarget(target)
+  return channel?.apiKey.trim() ?? ''
 }
 
 async function fetchChannelModels(target: string, purpose: PlaygroundApiPurpose): Promise<string[]> {
@@ -250,7 +252,7 @@ export async function getModelGroups(purpose: PlaygroundApiPurpose, force = fals
           const allModels = await getChannelModels(target, purpose, force)
           const selected = getSelectedModels(target, purpose)
           const allowed = hasSelectedModelsConfig(target, purpose)
-            ? allModels.filter((id) => selected.includes(id))
+            ? allModels.filter((id) => selected.includes(id) && isModelForPurpose(id, purpose))
             : allModels.filter((id) => isModelForPurpose(id, purpose))
           return { id: channel.id, label: channel.name, target, models: allowed }
         } catch {
