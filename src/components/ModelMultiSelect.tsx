@@ -12,13 +12,14 @@ interface ModelMultiSelectProps {
   placeholder: string
   onChange: (value: string[]) => void
   className?: string
+  display?: 'chips' | 'summary'
 }
 
 function uniqueValues(values: string[]) {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)))
 }
 
-export default function ModelMultiSelect({ value, options = [], placeholder, onChange, className = '' }: ModelMultiSelectProps) {
+export default function ModelMultiSelect({ value, options = [], placeholder, onChange, className = '', display = 'chips' }: ModelMultiSelectProps) {
   const rootRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const [open, setOpen] = useState(false)
@@ -71,37 +72,54 @@ export default function ModelMultiSelect({ value, options = [], placeholder, onC
 
   const visibleSelected = selected.slice(0, 3)
   const restCount = Math.max(0, selected.length - visibleSelected.length)
+  const selectedLabels = selected.map((item) => optionMap.get(item) ?? item)
+  const summaryPreview = selectedLabels.slice(0, 2).join('、') + (selected.length > 2 ? ` 等 ${selected.length} 个` : '')
 
   return (
     <div ref={rootRef} className={`relative ${className}`}>
       <div
-        className="flex min-h-[34px] w-full items-center gap-1 rounded-xl border border-gray-300/80 bg-white/70 px-2 py-1 text-sm text-gray-700 outline-none transition focus-within:border-blue-400 dark:border-white/[0.16] dark:bg-white/[0.03] dark:text-gray-100"
+        className={`flex w-full items-center gap-2 rounded-xl border border-gray-300/80 bg-white/70 text-sm text-gray-700 outline-none transition focus-within:border-blue-400 dark:border-white/[0.16] dark:bg-white/[0.03] dark:text-gray-100 ${
+          display === 'summary' ? 'min-h-[48px] px-3 py-2' : 'min-h-[34px] px-2 py-1'
+        }`}
         onClick={() => {
           setOpen(true)
           inputRef.current?.focus()
         }}
       >
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
-          {visibleSelected.map((item) => (
-            <span key={item} className="inline-flex max-w-[220px] items-center gap-1 rounded-md bg-gray-200 px-2 py-0.5 text-xs font-semibold text-gray-700 dark:bg-white/[0.12] dark:text-gray-200">
-              <span className="truncate" title={optionMap.get(item) ?? item}>{optionMap.get(item) ?? item}</span>
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation()
-                  onChange(selected.filter((selectedItem) => selectedItem !== item))
-                }}
-                className="rounded-full p-0.5 text-gray-500 hover:bg-black/10 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-white/10 dark:hover:text-white"
-                aria-label="移除模型"
-              >
-                <CloseIcon className="h-3 w-3" />
-              </button>
-            </span>
-          ))}
-          {restCount > 0 && (
-            <span className="rounded-md bg-gray-200 px-2 py-0.5 text-xs font-semibold text-gray-700 dark:bg-white/[0.12] dark:text-gray-200">
-              + {restCount} ...
-            </span>
+        <div className={`${display === 'summary' ? 'flex min-w-0 flex-1 items-center gap-3' : 'flex min-w-0 flex-1 flex-wrap items-center gap-1'}`}>
+          {display === 'summary' ? (
+            <div className="min-w-0 flex-1">
+              <div className={`truncate text-xs font-semibold ${selected.length ? 'text-gray-800 dark:text-gray-100' : 'text-gray-400'}`}>
+                {selected.length ? `已选 ${selected.length} 个模型` : placeholder}
+              </div>
+              <div className="mt-0.5 truncate text-[11px] text-gray-500 dark:text-gray-400" title={selectedLabels.join('、')}>
+                {selected.length ? summaryPreview : '点击展开选择，或输入模型名后按 Enter'}
+              </div>
+            </div>
+          ) : (
+            <>
+              {visibleSelected.map((item) => (
+                <span key={item} className="inline-flex max-w-[220px] items-center gap-1 rounded-md bg-gray-200 px-2 py-0.5 text-xs font-semibold text-gray-700 dark:bg-white/[0.12] dark:text-gray-200">
+                  <span className="truncate" title={optionMap.get(item) ?? item}>{optionMap.get(item) ?? item}</span>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onChange(selected.filter((selectedItem) => selectedItem !== item))
+                    }}
+                    className="rounded-full p-0.5 text-gray-500 hover:bg-black/10 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-white/10 dark:hover:text-white"
+                    aria-label="移除模型"
+                  >
+                    <CloseIcon className="h-3 w-3" />
+                  </button>
+                </span>
+              ))}
+              {restCount > 0 && (
+                <span className="rounded-md bg-gray-200 px-2 py-0.5 text-xs font-semibold text-gray-700 dark:bg-white/[0.12] dark:text-gray-200">
+                  + {restCount} ...
+                </span>
+              )}
+            </>
           )}
           <input
             ref={inputRef}
@@ -121,7 +139,7 @@ export default function ModelMultiSelect({ value, options = [], placeholder, onC
               }
             }}
             placeholder={selected.length ? '' : placeholder}
-            className="min-w-[120px] flex-1 bg-transparent px-1 py-1 text-xs outline-none placeholder:text-gray-400"
+            className={`${display === 'summary' ? 'w-24 shrink-0 text-right' : 'min-w-[120px] flex-1'} bg-transparent px-1 py-1 text-xs outline-none placeholder:text-gray-400`}
           />
         </div>
         <button

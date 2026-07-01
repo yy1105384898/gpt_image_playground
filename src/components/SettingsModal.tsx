@@ -1939,41 +1939,23 @@ export default function SettingsModal() {
 
                 {apiConfigTab === 'models' && (
                   <div className="space-y-4">
-                    <div className="rounded-2xl border border-gray-200/70 bg-white/70 p-4 dark:border-white/[0.08] dark:bg-white/[0.03]">
-                      <div className="text-sm font-bold text-gray-900 dark:text-gray-50">默认模型和可选项</div>
-                      <div data-selectable-text className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
-                        可选项决定各处下拉框展示哪些模型；默认模型会同步到对应的对话、生图、视频请求配置。
+                    <div className="flex flex-col gap-3 rounded-2xl border border-gray-200/70 bg-white/70 p-4 dark:border-white/[0.08] dark:bg-white/[0.03] sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <div className="text-sm font-bold text-gray-900 dark:text-gray-50">模型配置</div>
+                        <div data-selectable-text className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
+                          按用途管理可选模型和默认模型，文本、生图、视频互不混用。
+                        </div>
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => setApiConfigTab('channels')}
+                        className="w-fit rounded-xl border border-gray-200/80 bg-white px-3 py-2 text-xs font-semibold text-gray-700 transition hover:bg-gray-100 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200 dark:hover:bg-white/[0.08]"
+                      >
+                        管理渠道
+                      </button>
                     </div>
 
-                    <div className="grid gap-4 md:grid-cols-2">
-                      {MODEL_CONFIG_GROUPS.map((group) => {
-                        const profile = profileByPurpose[group.purpose]
-                        const currentModel = profile?.model || DEFAULT_SIMPLIFIED_MODELS[group.purpose]
-                        return (
-                          <div key={group.purpose}>
-                            <div className="mb-1.5 flex items-center justify-between gap-2">
-                              <span className="text-sm font-semibold text-gray-600 dark:text-gray-300">{group.optionsLabel}</span>
-                              <button
-                                type="button"
-                                onClick={() => setApiConfigTab('channels')}
-                                className="text-xs font-semibold text-blue-600 hover:text-blue-700 dark:text-blue-300 dark:hover:text-blue-200"
-                              >
-                                去渠道设置
-                              </button>
-                            </div>
-                            <ModelMultiSelect
-                              value={selectedPurposeModelValues(group.purpose)}
-                              options={purposeModelOptions(group.purpose, currentModel)}
-                              placeholder={modelChannels.some((channel) => channel.models.length) ? `请选择或输入${group.optionsLabel}` : '先到渠道里填写或拉取模型'}
-                              onChange={(values) => updatePurposeSelectedModelValues(group.purpose, values)}
-                            />
-                          </div>
-                        )
-                      })}
-                    </div>
-
-                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                    <div className="grid gap-3 md:grid-cols-3">
                       {MODEL_CONFIG_GROUPS.map((group) => {
                         const profile = profileByPurpose[group.purpose]
                         const activeTarget = getPurposeChannelTarget(group.purpose)
@@ -1984,7 +1966,8 @@ export default function SettingsModal() {
                         const validFallbackModel = isModelForPurpose(fallbackModel, group.purpose) ? fallbackModel : ''
                         const activeValue = validFallbackModel ? modelOptionValue(activeTarget, validFallbackModel) : ''
                         const selectedValues = selectedPurposeModelValues(group.purpose)
-                        const optionMap = new Map(purposeModelOptions(group.purpose, validFallbackModel).map((option) => [option.value, option.label]))
+                        const allOptions = purposeModelOptions(group.purpose, validFallbackModel)
+                        const optionMap = new Map(allOptions.map((option) => [option.value, option.label]))
                         const fallbackValues = selectedValues.length ? selectedValues : activeValue ? [activeValue] : []
                         const defaultOptions = fallbackValues.map((value) => ({
                           value,
@@ -1994,16 +1977,44 @@ export default function SettingsModal() {
                           ? activeValue
                           : defaultOptions[0]?.value ?? ''
                         return (
-                          <div key={group.defaultLabel}>
-                            <div className="mb-1.5 text-sm font-semibold text-gray-600 dark:text-gray-300">{group.defaultLabel}</div>
-                            <Select
-                              value={defaultValue}
-                              onChange={(value) => updatePurposeDefaultModelFromEntry(group.purpose, String(value))}
-                              options={defaultOptions}
-                              disabled={!defaultOptions.length}
-                              className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
-                            />
-                          </div>
+                          <section key={group.purpose} className="min-w-0 rounded-2xl border border-gray-200/70 bg-white/85 p-4 shadow-sm dark:border-white/[0.08] dark:bg-white/[0.03]">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="h-2 w-2 rounded-full bg-blue-500/80" />
+                                  <div className="text-sm font-bold text-gray-900 dark:text-gray-50">{group.label}模型</div>
+                                </div>
+                                <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                                  已选 {selectedValues.length} 个，可用 {allOptions.length} 个
+                                </div>
+                              </div>
+                              <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-semibold text-gray-500 dark:bg-white/[0.08] dark:text-gray-300">
+                                {group.badge}
+                              </span>
+                            </div>
+
+                            <div className="mt-4">
+                              <div className="mb-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400">{group.defaultLabel}</div>
+                              <Select
+                                value={defaultValue}
+                                onChange={(value) => updatePurposeDefaultModelFromEntry(group.purpose, String(value))}
+                                options={defaultOptions}
+                                disabled={!defaultOptions.length}
+                                className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-xs font-medium text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                              />
+                            </div>
+
+                            <div className="mt-3">
+                              <div className="mb-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400">{group.optionsLabel}</div>
+                              <ModelMultiSelect
+                                value={selectedValues}
+                                options={allOptions}
+                                display="summary"
+                                placeholder={modelChannels.some((channel) => channel.models.length) ? `选择${group.label}模型` : '先到渠道里填写或拉取模型'}
+                                onChange={(values) => updatePurposeSelectedModelValues(group.purpose, values)}
+                              />
+                            </div>
+                          </section>
                         )
                       })}
                     </div>
