@@ -135,14 +135,14 @@ export default function Header() {
                 <>
                   <span className="min-w-0 truncate text-[17px] font-bold tracking-tight text-white sm:hidden" title={favoriteCollectionTitle}>{favoriteCollectionTitle}</span>
                   <span className="hidden items-center gap-2 text-lg font-black text-white sm:inline-flex">
-                    <BrandLogo className="h-8 w-8 rounded-xl shadow-[0_0_22px_rgba(245,158,11,0.28)]" />
-                    <span>YANGYANG 绘影</span>
+                    <BrandLogo className="h-8 w-8 rounded-xl shadow-[0_0_22px_rgba(14,165,233,0.30)]" />
+                    <span>Y² 绘影</span>
                   </span>
                 </>
               ) : (
                 <span className="inline-flex min-w-0 items-center gap-2 text-[17px] sm:text-lg font-black text-white">
-                  <BrandLogo className="h-8 w-8 shrink-0 rounded-xl shadow-[0_0_22px_rgba(245,158,11,0.28)]" />
-                  <span className="truncate">YANGYANG 绘影</span>
+                  <BrandLogo className="h-8 w-8 shrink-0 rounded-xl shadow-[0_0_22px_rgba(14,165,233,0.30)]" />
+                  <span className="truncate">Y² 绘影</span>
                 </span>
               )}
               {hasUpdate && latestRelease && (

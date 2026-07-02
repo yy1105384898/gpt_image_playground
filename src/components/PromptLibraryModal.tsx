@@ -178,7 +178,7 @@ export default function PromptLibraryModal() {
       <div className="border-b border-white/[0.08] bg-[#080809]/95 backdrop-blur-xl">
         <div className="safe-area-x mx-auto grid h-16 max-w-7xl grid-cols-[1fr_auto_1fr] items-center gap-3">
           <div className="min-w-0 truncate text-sm font-semibold tracking-tight text-white">
-YANGYANG 绘影 <span className="font-normal text-gray-500">Prompts</span>
+Y² 绘影 <span className="font-normal text-gray-500">Prompts</span>
           </div>
           <div className="flex items-center gap-2 rounded-xl bg-white/[0.04] p-1 ring-1 ring-white/[0.08]">
             {MODELS.map((m) => (

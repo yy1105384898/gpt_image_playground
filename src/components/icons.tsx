@@ -1,19 +1,26 @@
 import type { SVGProps } from 'react'
 
-// 品牌标识：暖色渐变圆角方块 + AI 生成「闪光星」，比纯字母更贴近生图工具调性。
+// 品牌标识：蓝色圆角方块 + 白色交叉光标，呼应 Y² 绘影的新标识。
 export function BrandLogo({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 32 32" className={className} aria-hidden="true">
       <defs>
         <linearGradient id="yyBrandGrad" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#fde047" />
-          <stop offset="55%" stopColor="#fbbf24" />
-          <stop offset="100%" stopColor="#f59e0b" />
+          <stop offset="0%" stopColor="#22d3ee" />
+          <stop offset="55%" stopColor="#0ea5e9" />
+          <stop offset="100%" stopColor="#2563eb" />
         </linearGradient>
       </defs>
-      <rect width="32" height="32" rx="9" fill="url(#yyBrandGrad)" />
-      <path d="M16 6.2l2.5 6.3 6.3 2.5-6.3 2.5L16 23.8l-2.5-6.3L7.2 15l6.3-2.5z" fill="#171717" />
-      <circle cx="23.4" cy="8.6" r="1.5" fill="#171717" opacity="0.55" />
+      <rect width="32" height="32" rx="8" fill="url(#yyBrandGrad)" />
+      <path
+        d="M10.2 9.8 16 15.6l5.8-5.8M10.2 22.2 16 16.4l5.8 5.8"
+        fill="none"
+        stroke="#fff"
+        strokeWidth="3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle cx="16" cy="16" r="2.1" fill="#fff" />
     </svg>
   )
 }
