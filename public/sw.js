@@ -1,5 +1,5 @@
-const CACHE_NAME = 'gpt-image-playground-v0.6.10-20260626-speed'
-const APP_SHELL = ['./', './index.html', './manifest.webmanifest', './pwa-icon.svg']
+const CACHE_NAME = 'gpt-image-playground-v0.6.11-20260702-logo'
+const APP_SHELL = ['./', './index.html', './manifest.webmanifest', './Y2-Nexus-logo.svg']
 const STATIC_PATH_RE = /\/(?:assets|prompt-library)\//
 
 self.addEventListener('install', (event) => {

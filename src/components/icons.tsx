@@ -1,26 +1,27 @@
 import type { SVGProps } from 'react'
 
-// 品牌标识：蓝绿渐变斜角方块 + 白色 Y² 符号。
+// 品牌标识：Y2 Nexus 原始矢量标识。
 export function BrandLogo({ className }: { className?: string }) {
   return (
-    <svg viewBox="0 0 32 32" className={className} aria-hidden="true">
+    <svg viewBox="0 0 128 128" className={className} aria-hidden="true">
       <defs>
-        <linearGradient id="yyBrandGrad" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#0b7ff4" />
-          <stop offset="52%" stopColor="#12b8d7" />
-          <stop offset="100%" stopColor="#21a38f" />
+        <linearGradient id="yyBrandGrad" x1="18" y1="14" x2="112" y2="118" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#0071e3" />
+          <stop offset=".52" stopColor="#00b8d9" />
+          <stop offset="1" stopColor="#2f8f74" />
         </linearGradient>
+        <filter id="yyBrandShadow" x="-20%" y="-20%" width="140%" height="140%">
+          <feDropShadow dx="0" dy="12" stdDeviation="12" floodColor="#0071e3" floodOpacity=".22" />
+        </filter>
       </defs>
-      <rect x="4.2" y="3.4" width="23.6" height="25.2" rx="7" fill="url(#yyBrandGrad)" transform="rotate(-6 16 16)" />
-      <path
-        d="M9.8 10.8 16 16.8l6.2-6M16 16.8v5.6"
-        fill="none"
-        stroke="#fff"
-        strokeWidth="3.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <circle cx="16" cy="22.5" r="2.2" fill="#fff" />
+      <rect x="18" y="18" width="92" height="92" rx="28" fill="url(#yyBrandGrad)" filter="url(#yyBrandShadow)" />
+      <path d="M43 42l21 21 21-21" fill="none" stroke="#fff" strokeWidth="11" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M64 63v28" fill="none" stroke="#fff" strokeWidth="11" strokeLinecap="round" />
+      <path d="M43 85c14-20 28-20 42 0" fill="none" stroke="#fff" strokeWidth="9" strokeLinecap="round" opacity=".86" />
+      <circle cx="43" cy="42" r="7.4" fill="#fff" />
+      <circle cx="85" cy="42" r="7.4" fill="#fff" />
+      <circle cx="64" cy="91" r="8" fill="#fff" />
+      <circle cx="64" cy="63" r="7.2" fill="#fff" opacity=".92" />
     </svg>
   )
 }

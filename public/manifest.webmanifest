@@ -9,7 +9,7 @@
   "theme_color": "#111827",
   "icons": [
     {
-      "src": "./y2-icon.svg",
+      "src": "./Y2-Nexus-logo.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"
