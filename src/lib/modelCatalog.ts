@@ -41,6 +41,7 @@ const AUDIO_RE = /audio|tts|speech|voice|music|sound/i
 const SELECTED_MODELS_STORAGE_KEY = 'yy-image-pro.selected-models'
 const CHANNEL_MODELS_STORAGE_KEY = 'yy-image-pro.channel-model-cache'
 const CHANNEL_MODELS_CACHE_TTL_MS = 5 * 60 * 1000
+export const MODEL_CATALOG_UPDATED_EVENT = 'yy-model-catalog-updated'
 
 interface StoredChannelModelCache {
   updatedAt: number
@@ -103,8 +104,7 @@ export function setSelectedModels(target: string, purpose: PlaygroundApiPurpose,
     [purpose]: Array.from(new Set(models.filter((model) => Boolean(model) && isModelForPurpose(model, purpose)))),
   }
   window.localStorage.setItem(SELECTED_MODELS_STORAGE_KEY, JSON.stringify(state))
-  cache.delete(purpose)
-  inflight.delete(purpose)
+  invalidateModelCatalogCache(purpose)
 }
 
 export function isModelForPurpose(id: string, purpose: PlaygroundApiPurpose): boolean {
@@ -235,9 +235,17 @@ export async function getChannelModels(target: string, purpose: PlaygroundApiPur
 const cache = new Map<PlaygroundApiPurpose, ModelGroup[]>()
 const inflight = new Map<PlaygroundApiPurpose, Promise<ModelGroup[]>>()
 
-export function invalidateModelCatalogCache() {
-  cache.clear()
-  inflight.clear()
+export function invalidateModelCatalogCache(purpose?: PlaygroundApiPurpose) {
+  if (purpose) {
+    cache.delete(purpose)
+    inflight.delete(purpose)
+  } else {
+    cache.clear()
+    inflight.clear()
+  }
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(MODEL_CATALOG_UPDATED_EVENT, { detail: { purpose } }))
+  }
 }
 
 export async function getModelGroups(purpose: PlaygroundApiPurpose, force = false): Promise<ModelGroup[]> {
@@ -284,17 +292,28 @@ export function useModelGroups(purpose: PlaygroundApiPurpose, enabled = true) {
 
   useEffect(() => {
     if (!enabled) return
-    if (cache.has(purpose)) {
-      setGroups(cache.get(purpose)!)
-      return
-    }
     let cancelled = false
-    setLoading(true)
-    getModelGroups(purpose)
-      .then((g) => { if (!cancelled) setGroups(g) })
-      .catch(() => { if (!cancelled) setGroups([]) })
-      .finally(() => { if (!cancelled) setLoading(false) })
-    return () => { cancelled = true }
+    const load = (force = false) => {
+      if (!force && cache.has(purpose)) {
+        setGroups(cache.get(purpose)!)
+        return
+      }
+      setLoading(true)
+      getModelGroups(purpose, force)
+        .then((g) => { if (!cancelled) setGroups(g) })
+        .catch(() => { if (!cancelled) setGroups([]) })
+        .finally(() => { if (!cancelled) setLoading(false) })
+    }
+    const onCatalogUpdated = (event: Event) => {
+      const detailPurpose = (event as CustomEvent<{ purpose?: PlaygroundApiPurpose }>).detail?.purpose
+      if (!detailPurpose || detailPurpose === purpose) load(true)
+    }
+    window.addEventListener(MODEL_CATALOG_UPDATED_EVENT, onCatalogUpdated)
+    load()
+    return () => {
+      cancelled = true
+      window.removeEventListener(MODEL_CATALOG_UPDATED_EVENT, onCatalogUpdated)
+    }
   }, [purpose, enabled])
 
   const refresh = () => {

@@ -937,6 +937,29 @@ export default function SettingsModal() {
     ))
   }
 
+  const reconcileFetchedPurposeModels = (target: string, purpose: PlaygroundApiPurpose, purposeModels: string[]) => {
+    const fetchedModels = uniqueModelOptions(purposeModels).filter((model) => isModelForPurpose(model, purpose))
+    const actualModelSet = new Set(fetchedModels)
+    const selected = getSelectedModels(target, purpose)
+    const sanitizedSelected = selected.filter((model) => actualModelSet.has(model) && isModelForPurpose(model, purpose))
+    const nextSelected = sanitizedSelected.length ? sanitizedSelected : getDefaultSelectedModels(fetchedModels, purpose)
+    setSelectedModels(target, purpose, nextSelected)
+
+    const nextDefaultModel = nextSelected[0]
+    if (!nextDefaultModel) return
+
+    const profileId = SIMPLIFIED_PROFILE_IDS_BY_PURPOSE[purpose]
+    const activeTarget = getPurposeChannelTarget(purpose)
+    const storedConfig = getStoredPlaygroundPurposeConfig(target, purpose)
+    const currentModel = target === activeTarget
+      ? baseDraftProfileModel(draft, profileId)
+      : (storedConfig.model ?? '')
+    if (actualModelSet.has(currentModel) && isModelForPurpose(currentModel, purpose)) return
+
+    saveStoredPurposeConfig(target, purpose, { model: nextDefaultModel })
+    if (target === activeTarget) updateSimplifiedProfile(profileId, { model: nextDefaultModel }, true)
+  }
+
   const updateChannelApiFormat = (channel: PlaygroundModelChannel, apiFormat: PlaygroundApiFormat) => {
     const defaultByFormat: Record<PlaygroundApiFormat, string> = {
       openai: 'https://api.openai.com/v1',
@@ -978,11 +1001,7 @@ export default function SettingsModal() {
       const models = uniqueModelOptions(purposeResults.flatMap(([, models]) => models))
       updateChannel(channel.id, { models })
       for (const [purpose, purposeModels] of purposeResults) {
-        const selected = getSelectedModels(channel.id, purpose)
-        if (!selected.length) {
-          const suggested = getDefaultSelectedModels(purposeModels, purpose)
-          if (suggested.length) setSelectedModels(channel.id, purpose, suggested)
-        }
+        reconcileFetchedPurposeModels(channel.id, purpose, purposeModels)
         setModelPickerState((state) => ({ ...state, [`${purpose}:${channel.id}`]: { loading: false, models: purposeModels } }))
       }
       showToast(`${channel.name || '渠道'} 模型列表已更新`, 'success')
@@ -1007,11 +1026,7 @@ export default function SettingsModal() {
           return [group.purpose, models] as const
         }))
         for (const [purpose, purposeModels] of purposeResults) {
-          const selected = getSelectedModels(channel.id, purpose)
-          if (!selected.length) {
-            const suggested = getDefaultSelectedModels(purposeModels, purpose)
-            if (suggested.length) setSelectedModels(channel.id, purpose, suggested)
-          }
+          reconcileFetchedPurposeModels(channel.id, purpose, purposeModels)
           setModelPickerState((state) => ({ ...state, [`${purpose}:${channel.id}`]: { loading: false, models: purposeModels } }))
         }
         return [channel.id, uniqueModelOptions(purposeResults.flatMap(([, models]) => models))] as const
@@ -1060,17 +1075,7 @@ export default function SettingsModal() {
     void getChannelModels(target, purpose, true)
       .then((models) => {
         const fetchedModels = uniqueModelOptions(models)
-        const selected = getSelectedModels(target, purpose)
-        const actualModelSet = new Set(fetchedModels)
-        const sanitizedSelected = selected.filter((model) => actualModelSet.has(model) && isModelForPurpose(model, purpose))
-        if (sanitizedSelected.length !== selected.length) setSelectedModels(target, purpose, sanitizedSelected)
-        const nextSelected = sanitizedSelected.length ? sanitizedSelected : getDefaultSelectedModels(fetchedModels, purpose)
-        if (!sanitizedSelected.length) setSelectedModels(target, purpose, nextSelected)
-        const profileId = SIMPLIFIED_PROFILE_IDS_BY_PURPOSE[purpose]
-        const currentModel = baseDraftProfileModel(draft, profileId)
-        if (nextSelected.length && (!nextSelected.includes(currentModel) || !isModelForPurpose(currentModel, purpose))) {
-          updateSimplifiedProfile(profileId, { model: nextSelected[0] }, true)
-        }
+        reconcileFetchedPurposeModels(target, purpose, fetchedModels)
         setModelPickerState((state) => ({ ...state, [key]: { loading: false, models: fetchedModels } }))
         setModelPickerVersion((version) => version + 1)
         showToast('模型已读取', 'success')
