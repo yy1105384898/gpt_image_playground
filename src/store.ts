@@ -78,6 +78,9 @@ const CUSTOM_RECOVERY_POLL_MS = 10_000
 const SUPPORT_PROMPT_IMAGE_THRESHOLD = 50
 const AGENT_INPUT_DRAFT_RETENTION_MS = 3 * 24 * 60 * 60 * 1000
 const AGENT_ROUND_IMAGE_MENTION_RE = /@(?:第)?(\d+)轮图(\d+)/g
+const SIMPLIFIED_TEXT_PROFILE_ID = 'yy-text-profile'
+const SIMPLIFIED_IMAGE_PROFILE_ID = 'yy-image-profile'
+const SIMPLIFIED_VIDEO_PROFILE_ID = 'yy-video-profile'
 const falRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const customRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const openAIWatchdogTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -1825,6 +1828,32 @@ export function getTaskApiProfile(settings: AppSettings, task: TaskRecord): ApiP
   return null
 }
 
+function isDedicatedNonImageProfile(profile: Pick<ApiProfile, 'id'> | null | undefined): boolean {
+  return profile?.id === SIMPLIFIED_TEXT_PROFILE_ID || profile?.id === SIMPLIFIED_VIDEO_PROFILE_ID
+}
+
+function getFallbackImageProfile(settings: AppSettings): ApiProfile | null {
+  const normalized = normalizeSettings(settings)
+  return (
+    (normalized.agentApiConfigMode === 'hybrid' ? getAgentImageApiProfile(normalized) : null) ??
+    normalized.profiles.find((profile) => profile.id === SIMPLIFIED_IMAGE_PROFILE_ID) ??
+    normalized.profiles.find((profile) => !isDedicatedNonImageProfile(profile)) ??
+    null
+  )
+}
+
+function getImageTaskApiProfile(settings: AppSettings): ApiProfile {
+  const activeProfile = getActiveApiProfile(settings)
+  const imageProfile = getFallbackImageProfile(settings)
+  return isDedicatedNonImageProfile(activeProfile) && imageProfile ? imageProfile : activeProfile
+}
+
+function getExecutableImageTaskApiProfile(settings: AppSettings, task: TaskRecord): ApiProfile | null {
+  const taskProfile = getTaskApiProfile(settings, task)
+  if (taskProfile && !isDedicatedNonImageProfile(taskProfile)) return taskProfile
+  return getImageTaskApiProfile(settings)
+}
+
 function createSettingsForApiProfile(settings: AppSettings, profile: ApiProfile): AppSettings {
   const normalized = normalizeSettings(settings)
   return normalizeSettings({
@@ -2321,7 +2350,7 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
     useStore.getState()
 
   const normalizedSettings = normalizeSettings(settings)
-  let activeProfile = getActiveApiProfile(settings)
+  let activeProfile = getImageTaskApiProfile(settings)
   let requestSettings = createSettingsForApiProfile(normalizedSettings, activeProfile)
   if (normalizedSettings.reuseTaskApiProfileTemporarily && (reusedTaskApiProfileId || reusedTaskApiProfileMissing)) {
     const reusedProfile = getReusedTaskApiProfile(normalizedSettings, reusedTaskApiProfileId)
@@ -2341,8 +2370,8 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
         return
       }
     } else {
-      activeProfile = reusedProfile
-      requestSettings = createSettingsForApiProfile(normalizedSettings, reusedProfile)
+      activeProfile = isDedicatedNonImageProfile(reusedProfile) ? getImageTaskApiProfile(settings) : reusedProfile
+      requestSettings = createSettingsForApiProfile(normalizedSettings, activeProfile)
     }
   }
 
@@ -4657,7 +4686,17 @@ async function executeTask(taskId: string) {
     })
     return
   }
-  const activeProfile = taskProfile ?? getActiveApiProfile(settings)
+  const activeProfile = getExecutableImageTaskApiProfile(settings, task)
+  if (!activeProfile) return
+  if (taskProfile && isDedicatedNonImageProfile(taskProfile) && taskProfile.id !== activeProfile.id) {
+    updateTaskInStore(taskId, {
+      apiProvider: activeProfile.provider,
+      apiProfileId: activeProfile.id,
+      apiProfileName: activeProfile.name,
+      apiMode: activeProfile.apiMode,
+      apiModel: activeProfile.model,
+    })
+  }
   const requestSettings = createSettingsForApiProfile(settings, activeProfile)
   const taskProvider = task.apiProvider ?? activeProfile.provider
   let falRequestInfo: { requestId: string; endpoint: string } | null = task.falRequestId && task.falEndpoint
@@ -5057,8 +5096,9 @@ export async function deleteFavoriteCollection(collectionId: string, deleteTasks
 /** 重试失败的任务：创建新任务并执行 */
 export async function retryTask(task: TaskRecord) {
   const { settings } = useStore.getState()
-  const activeProfile = getActiveApiProfile(settings)
-  const normalizedParams = normalizeParamsForSettings(task.params, settings, { hasInputImages: task.inputImageIds.length > 0 })
+  const activeProfile = getImageTaskApiProfile(settings)
+  const requestSettings = createSettingsForApiProfile(settings, activeProfile)
+  const normalizedParams = normalizeParamsForSettings(task.params, requestSettings, { hasInputImages: task.inputImageIds.length > 0 })
   const shouldUseTransparentOutput = normalizedParams.output_format === 'png' && normalizedParams.transparent_output
   const taskParams = shouldUseTransparentOutput
     ? getTransparentRequestParams(normalizedParams)

@@ -131,7 +131,7 @@ import { clearAgentConversations, clearImages, clearTasks, getAllAgentConversati
 import { callAgentResponsesApi, callBatchImageSingle } from './lib/agentApi'
 import { getFalQueuedImageResult } from './lib/falAiImageApi'
 import { removeKeyedBackgroundFromDataUrl } from './lib/transparentImage'
-import { cleanStaleAgentInputDrafts, clearFailedTasks, deleteAgentRoundFromConversation, deleteFavoriteCollection, editOutputs, getActiveAgentRounds, getAgentConversationTaskIds, getAgentRoundTaskIds, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, migratePersistedState, regenerateAgentAssistantMessage, remapAgentRoundMentionsForPathChange, removeTask, reuseConfig, stopAgentResponse, submitAgentMessage, submitTask, taskMatchesFilterStatus, taskMatchesSearchQuery, useStore } from './store'
+import { cleanStaleAgentInputDrafts, clearFailedTasks, deleteAgentRoundFromConversation, deleteFavoriteCollection, editOutputs, getActiveAgentRounds, getAgentConversationTaskIds, getAgentRoundTaskIds, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, migratePersistedState, regenerateAgentAssistantMessage, remapAgentRoundMentionsForPathChange, removeTask, retryTask, reuseConfig, stopAgentResponse, submitAgentMessage, submitTask, taskMatchesFilterStatus, taskMatchesSearchQuery, useStore } from './store'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
 const imageB = { id: 'image-b', dataUrl: 'data:image/png;base64,b' }
@@ -181,6 +181,10 @@ function importFile(data: ExportData): File {
   const zipped = zipSync({ 'manifest.json': strToU8(JSON.stringify(data)) })
   const buffer = zipped.buffer.slice(zipped.byteOffset, zipped.byteOffset + zipped.byteLength)
   return { arrayBuffer: async () => buffer } as File
+}
+
+async function flushAsyncTasks(iterations = 5) {
+  for (let i = 0; i < iterations; i += 1) await new Promise((resolve) => setTimeout(resolve, 0))
 }
 
 describe('favorite collection deletion', () => {
@@ -293,6 +297,118 @@ describe('mask draft lifecycle in store actions', () => {
     const state = useStore.getState()
     expect(state.tasks).toHaveLength(1)
     expect(state.showToast).toHaveBeenCalledWith('任务已提交', 'success')
+  })
+
+  it('uses the dedicated image profile for gallery submit when the active profile is video', async () => {
+    const { callImageApi } = await import('./lib/api')
+    vi.mocked(callImageApi).mockClear()
+    vi.mocked(callImageApi).mockResolvedValueOnce({
+      images: [],
+      actualParams: {},
+      actualParamsList: [],
+      revisedPrompts: [],
+    })
+    const textProfile = createDefaultOpenAIProfile({
+      id: 'yy-text-profile',
+      name: '文本模型',
+      baseUrl: 'https://text.example/v1',
+      apiKey: 'text-key',
+      model: 'gpt-4.1',
+      apiMode: 'responses',
+    })
+    const imageProfile = createDefaultOpenAIProfile({
+      id: 'yy-image-profile',
+      name: '生图模型',
+      baseUrl: 'https://image.example/v1',
+      apiKey: 'image-key',
+      model: 'gpt-image-2',
+      apiMode: 'images',
+    })
+    const videoProfile = createDefaultOpenAIProfile({
+      id: 'yy-video-profile',
+      name: '视频模型',
+      baseUrl: 'https://video.example/v1',
+      apiKey: 'video-key',
+      model: 'grok-video-1.5',
+      apiMode: 'images',
+    })
+    useStore.setState({
+      settings: normalizeSettings({
+        ...DEFAULT_SETTINGS,
+        profiles: [textProfile, imageProfile, videoProfile],
+        activeProfileId: videoProfile.id,
+        agentApiConfigMode: 'hybrid',
+        agentTextProfileId: textProfile.id,
+        agentImageProfileId: imageProfile.id,
+      }),
+      prompt: 'prompt',
+      params: { ...DEFAULT_PARAMS },
+    })
+
+    await submitTask()
+    await flushAsyncTasks()
+
+    const [request] = vi.mocked(callImageApi).mock.calls[0]
+    expect(request.settings).toMatchObject({
+      activeProfileId: imageProfile.id,
+      baseUrl: imageProfile.baseUrl,
+      apiKey: imageProfile.apiKey,
+      model: imageProfile.model,
+    })
+    expect(useStore.getState().tasks[0]).toMatchObject({
+      apiProfileId: imageProfile.id,
+      apiProfileName: imageProfile.name,
+      apiModel: imageProfile.model,
+    })
+  })
+
+  it('uses the dedicated image profile when retrying while the active profile is video', async () => {
+    const { callImageApi } = await import('./lib/api')
+    vi.mocked(callImageApi).mockClear()
+    vi.mocked(callImageApi).mockResolvedValueOnce({
+      images: [],
+      actualParams: {},
+      actualParamsList: [],
+      revisedPrompts: [],
+    })
+    const imageProfile = createDefaultOpenAIProfile({
+      id: 'yy-image-profile',
+      name: '生图模型',
+      baseUrl: 'https://image.example/v1',
+      apiKey: 'image-key',
+      model: 'gpt-image-2',
+    })
+    const videoProfile = createDefaultOpenAIProfile({
+      id: 'yy-video-profile',
+      name: '视频模型',
+      baseUrl: 'https://video.example/v1',
+      apiKey: 'video-key',
+      model: 'grok-video-1.5',
+    })
+    useStore.setState({
+      settings: normalizeSettings({
+        ...DEFAULT_SETTINGS,
+        profiles: [imageProfile, videoProfile],
+        activeProfileId: videoProfile.id,
+        agentApiConfigMode: 'hybrid',
+        agentImageProfileId: imageProfile.id,
+      }),
+    })
+
+    await retryTask(task({ id: 'failed-task', prompt: 'retry prompt', status: 'error', error: 'failed' }))
+    await flushAsyncTasks()
+
+    const [request] = vi.mocked(callImageApi).mock.calls[0]
+    expect(request.settings).toMatchObject({
+      activeProfileId: imageProfile.id,
+      baseUrl: imageProfile.baseUrl,
+      apiKey: imageProfile.apiKey,
+      model: imageProfile.model,
+    })
+    expect(useStore.getState().tasks[0]).toMatchObject({
+      apiProfileId: imageProfile.id,
+      apiModel: imageProfile.model,
+    })
   })
 
   it('stores decoded image size as actual size when the API omits size', async () => {
