@@ -19,18 +19,29 @@ function uniqueValues(values: string[]) {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)))
 }
 
+function uniqueOptions(options: ModelMultiSelectOption[]) {
+  const seen = new Set<string>()
+  return options.filter((option) => {
+    const value = option.value.trim()
+    if (!value || seen.has(value)) return false
+    seen.add(value)
+    return true
+  })
+}
+
 export default function ModelMultiSelect({ value, options = [], placeholder, onChange, className = '', display = 'chips' }: ModelMultiSelectProps) {
   const rootRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const selected = useMemo(() => uniqueValues(value), [value])
-  const optionMap = useMemo(() => new Map(options.map((option) => [option.value, option.label])), [options])
+  const normalizedOptions = useMemo(() => uniqueOptions(options), [options])
+  const optionMap = useMemo(() => new Map(normalizedOptions.map((option) => [option.value, option.label])), [normalizedOptions])
   const selectedSet = useMemo(() => new Set(selected), [selected])
   const filteredOptions = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()
-    const baseOptions = options.length
-      ? options
+    const baseOptions = normalizedOptions.length
+      ? normalizedOptions
       : selected.map((item) => ({ value: item, label: item }))
     const merged = [
       ...baseOptions,
@@ -42,7 +53,7 @@ export default function ModelMultiSelect({ value, options = [], placeholder, onC
       if (!normalizedQuery) return true
       return option.value.toLowerCase().includes(normalizedQuery) || option.label.toLowerCase().includes(normalizedQuery)
     })
-  }, [optionMap, options, query, selected])
+  }, [normalizedOptions, optionMap, query, selected])
 
   useEffect(() => {
     if (!open) return
@@ -157,7 +168,7 @@ export default function ModelMultiSelect({ value, options = [], placeholder, onC
       </div>
 
       {open && (
-        <div className="absolute left-0 right-0 top-[calc(100%+4px)] z-[80] max-h-72 overflow-y-auto rounded-xl border border-gray-200 bg-white p-1 shadow-2xl dark:border-white/[0.10] dark:bg-[#242424]">
+        <div className="absolute left-0 top-[calc(100%+4px)] z-[80] max-h-72 w-max min-w-full max-w-[min(92vw,520px)] overflow-y-auto rounded-xl border border-gray-200 bg-white p-1 shadow-2xl dark:border-white/[0.10] dark:bg-[#242424]">
           {filteredOptions.length ? filteredOptions.map((option) => {
             const checked = selectedSet.has(option.value)
             return (
@@ -167,7 +178,7 @@ export default function ModelMultiSelect({ value, options = [], placeholder, onC
                 onClick={() => toggleValue(option.value)}
                 className={`flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm font-semibold transition ${checked ? 'bg-gray-100 text-gray-900 dark:bg-white/[0.08] dark:text-white' : 'text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-white/[0.06]'}`}
               >
-                <span className="min-w-0 truncate" title={option.label}>{option.label}</span>
+                <span className="min-w-0 break-all leading-snug" title={option.label}>{option.label}</span>
                 {checked && <span className="shrink-0 text-base leading-none">✓</span>}
               </button>
             )
