@@ -36,6 +36,24 @@ describe('model catalog', () => {
     expect(ids).toHaveLength(3)
   })
 
+  it('ignores provider and endpoint names returned beside real models', () => {
+    const ids = extractModelIds({
+      data: [
+        { name: 'openai' },
+        { name: 'gemini' },
+        { name: 'openai_edit' },
+        { id: 'gpt-image-2' },
+      ],
+      result: {
+        openai_generations: { enabled: true },
+        'flux-pro-2': { enabled: true },
+      },
+    })
+
+    expect(ids).toEqual(expect.arrayContaining(['gpt-image-2', 'flux-pro-2']))
+    expect(ids).not.toEqual(expect.arrayContaining(['openai', 'gemini', 'openai_edit', 'openai_generations']))
+  })
+
   it('fetches the real channel model list once without purpose routing and filters locally', async () => {
     stubLocalStorage({
       [PLAYGROUND_MODEL_CHANNELS_STORAGE_KEY]: JSON.stringify([

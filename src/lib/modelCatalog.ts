@@ -49,12 +49,13 @@ interface StoredChannelModelCache {
 }
 
 function modelIdFromItem(item: unknown): string {
-  if (typeof item === 'string') return item.trim()
+  if (typeof item === 'string') return normalizeModelIdCandidate(item)
   if (!item || typeof item !== 'object' || Array.isArray(item)) return ''
   const record = item as Record<string, unknown>
   for (const key of ['id', 'name', 'model', 'model_id', 'modelId']) {
     const value = record[key]
-    if (typeof value === 'string' && value.trim()) return value.trim()
+    const normalized = typeof value === 'string' ? normalizeModelIdCandidate(value) : ''
+    if (normalized) return normalized
   }
   return ''
 }
@@ -74,6 +75,46 @@ const NON_MODEL_OBJECT_KEYS = new Set([
   'limit',
 ])
 const MODEL_KEY_HINT_RE = /gpt|claude|gemini|deepseek|qwen|kimi|glm|llama|mistral|grok|doubao|hunyuan|ernie|nova|command|sora|veo|kling|可灵|video|seedance|runway|pika|hailuo|海螺|vidu|wan|t2v|i2v|flux|dall|image|img|imagen|seedream|stable|midjourney|mj|recraft|ideogram|jimeng|即梦|cogview|cogvideo|tts|whisper|embedding|rerank|[-_/.:]\d/i
+const NON_MODEL_ID_KEYS = new Set([
+  'openai',
+  'openai_chat',
+  'openai_edit',
+  'openai_edits',
+  'openai_generation',
+  'openai_generations',
+  'openai_image',
+  'openai_images',
+  'gemini',
+  'google',
+  'anthropic',
+  'azure',
+  'fal',
+  'replicate',
+  'chat',
+  'chats',
+  'text',
+  'texts',
+  'image',
+  'images',
+  'video',
+  'videos',
+  'edit',
+  'edits',
+  'generation',
+  'generations',
+  'completion',
+  'completions',
+  'response',
+  'responses',
+])
+
+function normalizeModelIdCandidate(value: string): string {
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  const key = trimmed.toLowerCase().replace(/[\s-]+/g, '_')
+  if (NON_MODEL_ID_KEYS.has(key)) return ''
+  return trimmed
+}
 
 function modelIdFromObjectKey(key: string, value: unknown): string {
   const trimmed = key.trim()
@@ -81,7 +122,7 @@ function modelIdFromObjectKey(key: string, value: unknown): string {
   if (!trimmed || MODEL_CONTAINER_KEYS.has(normalized) || NON_MODEL_OBJECT_KEYS.has(normalized)) return ''
   if (!MODEL_KEY_HINT_RE.test(trimmed)) return ''
   if (value == null) return ''
-  return trimmed
+  return normalizeModelIdCandidate(trimmed)
 }
 
 function collectModelIdsFromList(list: unknown[]): string[] {
@@ -231,19 +272,29 @@ async function fetchChannelModels(target: string): Promise<string[]> {
   const auth = authHeader(tokenForTarget(target) || profile?.apiKey || '')
   const proxyConfig = readClientDevProxyConfig()
   const useApiProxy = shouldUseApiProxy(profile?.apiProxy ?? true, proxyConfig)
-  const url = buildApiUrl(apiTarget, 'models', proxyConfig, useApiProxy)
   const headers: Record<string, string> = {
     'X-YY-API-Target': apiTarget,
   }
   if (auth) headers.Authorization = auth
-  try {
+  const requestModels = async (url: string) => {
     const resp = await fetch(url, { method: 'GET', headers, cache: 'no-store' })
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
     const json = await resp.json()
-    const models = extractModelIds(json)
+    return extractModelIds(json)
+  }
+  try {
+    const models = await requestModels(buildApiUrl(apiTarget, 'models', proxyConfig, false))
     if (models.length) return models
   } catch {
-    // Hosted Flask helper below understands NewAPI/SubAPI routing and is kept as a fallback.
+    // Browser CORS or endpoint restrictions can block direct model reads; try the hosted proxy below.
+  }
+  if (useApiProxy) {
+    try {
+      const models = await requestModels(buildApiUrl(apiTarget, 'models', proxyConfig, true))
+      if (models.length) return models
+    } catch {
+      // Hosted Flask helper below understands NewAPI/SubAPI routing and is kept as a fallback.
+    }
   }
   if (typeof window !== 'undefined' && window.location.pathname.replace(/\/+/g, '/').startsWith('/playground/')) {
     try {
