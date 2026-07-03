@@ -213,30 +213,21 @@ async function fetchChannelModels(target: string): Promise<string[]> {
   return []
 }
 
-export async function getChannelModels(target: string, purpose: PlaygroundApiPurpose, force = false): Promise<string[]> {
-  const key = selectedModelsKey(target, purpose)
+export async function getChannelModelList(target: string, force = false): Promise<string[]> {
   const rawKey = channelModelsKey(target)
   const channel = findPlaygroundModelChannelByTarget(target)
-  if (!force && channel?.models.length) return channel.models.filter((model) => isModelForPurpose(model, purpose))
-  if (!force && channelModelCache.has(key)) return channelModelCache.get(key)!
+  if (!force && channel?.models.length) return channel.models
   if (!force && channelModelCache.has(rawKey)) {
-    const models = channelModelCache.get(rawKey)!.filter((model) => isModelForPurpose(model, purpose))
-    channelModelCache.set(key, models)
-    return models
+    return channelModelCache.get(rawKey)!
   }
   if (!force) {
     const stored = readStoredChannelModels(rawKey)
     if (stored) {
       channelModelCache.set(rawKey, stored)
-      const models = stored.filter((model) => isModelForPurpose(model, purpose))
-      channelModelCache.set(key, models)
-      return models
+      return stored
     }
   }
-  if (!force && channelModelInflight.has(key)) return channelModelInflight.get(key)!
-  if (channelModelInflight.has(rawKey)) {
-    return channelModelInflight.get(rawKey)!.then((models) => models.filter((model) => isModelForPurpose(model, purpose)))
-  }
+  if (!force && channelModelInflight.has(rawKey)) return channelModelInflight.get(rawKey)!
   const rawTask = (async () => {
     try {
       const all = await fetchChannelModels(target)
@@ -247,24 +238,25 @@ export async function getChannelModels(target: string, purpose: PlaygroundApiPur
       channelModelInflight.delete(rawKey)
     }
   })()
-  const task = rawTask
-    .then((all) => {
-      const models = all.filter((model) => isModelForPurpose(model, purpose))
-      channelModelCache.set(key, models)
-      return models
-    })
-    .finally(() => {
-      channelModelInflight.delete(key)
-    })
-  channelModelInflight.set(key, task)
   channelModelInflight.set(rawKey, rawTask)
-  return task
+  return rawTask
+}
+
+export async function getChannelModels(target: string, purpose: PlaygroundApiPurpose, force = false): Promise<string[]> {
+  const key = selectedModelsKey(target, purpose)
+  if (!force && channelModelCache.has(key)) return channelModelCache.get(key)!
+  const all = await getChannelModelList(target, force)
+  const models = all.filter((model) => isModelForPurpose(model, purpose))
+  channelModelCache.set(key, models)
+  return models
 }
 
 const cache = new Map<PlaygroundApiPurpose, ModelGroup[]>()
 const inflight = new Map<PlaygroundApiPurpose, Promise<ModelGroup[]>>()
 
 export function invalidateModelCatalogCache(purpose?: PlaygroundApiPurpose) {
+  channelModelCache.clear()
+  channelModelInflight.clear()
   if (purpose) {
     cache.delete(purpose)
     inflight.delete(purpose)

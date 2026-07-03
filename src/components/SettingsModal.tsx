@@ -32,7 +32,7 @@ import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_STREAM_PARTIAL_IMAGES, type Agen
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { DEFAULT_DROPDOWN_MAX_HEIGHT, getDropdownMaxHeight } from '../lib/dropdown'
-import { getChannelModels, getDefaultSelectedModels, getSelectedModels, invalidateModelCatalogCache, isModelForPurpose, setSelectedModels } from '../lib/modelCatalog'
+import { getChannelModelList, getChannelModels, getDefaultSelectedModels, getSelectedModels, invalidateModelCatalogCache, isModelForPurpose, setSelectedModels } from '../lib/modelCatalog'
 import { getStoredPlaygroundPurposeConfig, savePlaygroundPurposeConfig } from '../lib/playgroundPurposeConfig'
 import {
   createPlaygroundModelChannel,
@@ -1018,13 +1018,10 @@ export default function SettingsModal() {
     }
     setLoadingChannelId(channel.id)
     try {
-      const purposeResults = await Promise.all(MODEL_CONFIG_GROUPS.map(async (group) => {
-        const models = await getChannelModels(channel.id, group.purpose, true)
-        return [group.purpose, models] as const
-      }))
-      const models = uniqueModelOptions(purposeResults.flatMap(([, models]) => models))
+      const models = uniqueModelOptions(await getChannelModelList(channel.id, true))
       updateChannel(channel.id, { models })
-      for (const [purpose, purposeModels] of purposeResults) {
+      for (const { purpose } of MODEL_CONFIG_GROUPS) {
+        const purposeModels = models.filter((model) => isModelForPurpose(model, purpose))
         reconcileFetchedPurposeModels(channel.id, purpose, purposeModels)
         setModelPickerState((state) => ({ ...state, [`${purpose}:${channel.id}`]: { loading: false, models: purposeModels } }))
       }
@@ -1045,15 +1042,13 @@ export default function SettingsModal() {
     setLoadingChannelId('all')
     try {
       const entries = await Promise.all(runnable.map(async (channel) => {
-        const purposeResults = await Promise.all(MODEL_CONFIG_GROUPS.map(async (group) => {
-          const models = await getChannelModels(channel.id, group.purpose, true)
-          return [group.purpose, models] as const
-        }))
-        for (const [purpose, purposeModels] of purposeResults) {
+        const models = uniqueModelOptions(await getChannelModelList(channel.id, true))
+        for (const { purpose } of MODEL_CONFIG_GROUPS) {
+          const purposeModels = models.filter((model) => isModelForPurpose(model, purpose))
           reconcileFetchedPurposeModels(channel.id, purpose, purposeModels)
           setModelPickerState((state) => ({ ...state, [`${purpose}:${channel.id}`]: { loading: false, models: purposeModels } }))
         }
-        return [channel.id, uniqueModelOptions(purposeResults.flatMap(([, models]) => models))] as const
+        return [channel.id, models] as const
       }))
       const modelMap = new Map(entries)
       saveChannels(modelChannels.map((channel) => modelMap.has(channel.id) ? { ...channel, models: modelMap.get(channel.id) ?? [] } : channel))
@@ -1150,10 +1145,11 @@ export default function SettingsModal() {
   }
 
   const selectedPurposeModelValues = (purpose: PlaygroundApiPurpose) => {
+    const available = new Set(purposeModelEntries(purpose).map((entry) => modelOptionValue(entry.target, entry.model)))
     return Array.from(new Set(modelChannels.flatMap((channel) => {
       const target = channelTarget(channel)
       return getSelectedModels(target, purpose).map((model) => modelOptionValue(target, model))
-    })))
+    }))).filter((value) => available.has(value))
   }
 
   const updatePurposeSelectedModelValues = (purpose: PlaygroundApiPurpose, values: string[]) => {
@@ -2020,15 +2016,12 @@ export default function SettingsModal() {
                         const profile = profileByPurpose[group.purpose]
                         const activeTarget = getPurposeChannelTarget(group.purpose)
                         const profileModel = profile?.model || ''
-                        const fallbackModel = isModelForPurpose(profileModel, group.purpose)
-                          ? profileModel
-                          : DEFAULT_SIMPLIFIED_MODELS[group.purpose]
-                        const validFallbackModel = isModelForPurpose(fallbackModel, group.purpose) ? fallbackModel : ''
-                        const activeValue = validFallbackModel ? modelOptionValue(activeTarget, validFallbackModel) : ''
+                        const validProfileModel = isModelForPurpose(profileModel, group.purpose) ? profileModel : ''
+                        const activeValue = validProfileModel ? modelOptionValue(activeTarget, validProfileModel) : ''
                         const selectedValues = selectedPurposeModelValues(group.purpose)
-                        const allOptions = purposeModelOptions(group.purpose, validFallbackModel)
+                        const allOptions = purposeModelOptions(group.purpose)
                         const optionMap = new Map(allOptions.map((option) => [option.value, option.label]))
-                        const fallbackValues = selectedValues.length ? selectedValues : activeValue ? [activeValue] : []
+                        const fallbackValues = selectedValues.length ? selectedValues : activeValue && optionMap.has(activeValue) ? [activeValue] : []
                         const defaultOptions = fallbackValues.map((value) => ({
                           value,
                           label: optionMap.get(value) ?? parseModelOptionValue(value, activeTarget).model,
