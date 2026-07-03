@@ -1022,6 +1022,10 @@ export default function SettingsModal() {
     setLoadingChannelId(channel.id)
     try {
       const models = uniqueModelOptions(await getChannelModelList(channel.id, true))
+      if (!models.length) {
+        showToast(`${channel.name || '渠道'} 未获取到模型，请确认 Base URL、API Key 或中转模型权限`, 'error')
+        return
+      }
       updateChannel(channel.id, { models })
       for (const { purpose } of MODEL_CONFIG_GROUPS) {
         const purposeModels = models.filter((model) => isModelForPurpose(model, purpose))
@@ -1046,6 +1050,7 @@ export default function SettingsModal() {
     try {
       const entries = await Promise.all(runnable.map(async (channel) => {
         const models = uniqueModelOptions(await getChannelModelList(channel.id, true))
+        if (!models.length) return [channel.id, null] as const
         for (const { purpose } of MODEL_CONFIG_GROUPS) {
           const purposeModels = models.filter((model) => isModelForPurpose(model, purpose))
           reconcileFetchedPurposeModels(channel.id, purpose, purposeModels)
@@ -1054,8 +1059,12 @@ export default function SettingsModal() {
         return [channel.id, models] as const
       }))
       const modelMap = new Map(entries)
-      saveChannels(modelChannels.map((channel) => modelMap.has(channel.id) ? { ...channel, models: modelMap.get(channel.id) ?? [] } : channel))
-      showToast('模型列表已更新', 'success')
+      const updatedCount = entries.filter(([, models]) => Boolean(models?.length)).length
+      saveChannels(modelChannels.map((channel) => {
+        const models = modelMap.get(channel.id)
+        return models?.length ? { ...channel, models } : channel
+      }))
+      showToast(updatedCount ? `模型列表已更新：${updatedCount} 个渠道` : '未获取到模型，请确认 Base URL、API Key 或中转模型权限', updatedCount ? 'success' : 'error')
     } catch {
       showToast('模型读取失败', 'error')
     } finally {

@@ -48,6 +48,47 @@ interface StoredChannelModelCache {
   models: string[]
 }
 
+function modelIdFromItem(item: unknown): string {
+  if (typeof item === 'string') return item.trim()
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return ''
+  const record = item as Record<string, unknown>
+  for (const key of ['id', 'name', 'model', 'model_id', 'modelId']) {
+    const value = record[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return ''
+}
+
+function collectModelIdsFromList(list: unknown[]): string[] {
+  return list.map(modelIdFromItem).filter(Boolean)
+}
+
+export function extractModelIds(payload: unknown): string[] {
+  const ids: string[] = []
+  const seenObjects = new Set<object>()
+  const visit = (value: unknown, depth = 0) => {
+    if (depth > 5 || value == null) return
+    if (Array.isArray(value)) {
+      ids.push(...collectModelIdsFromList(value))
+      value.forEach((item) => {
+        if (item && typeof item === 'object') visit(item, depth + 1)
+      })
+      return
+    }
+    if (typeof value !== 'object') return
+    if (seenObjects.has(value)) return
+    seenObjects.add(value)
+    const directId = modelIdFromItem(value)
+    if (directId) ids.push(directId)
+    const record = value as Record<string, unknown>
+    for (const key of ['data', 'models', 'model_list', 'available_models', 'items', 'list', 'result', 'results']) {
+      visit(record[key], depth + 1)
+    }
+  }
+  visit(payload)
+  return Array.from(new Set(ids))
+}
+
 function selectedModelsKey(target: string, purpose: PlaygroundApiPurpose) {
   return `${purpose}:${target}`
 }
@@ -169,11 +210,7 @@ async function fetchChannelModels(target: string): Promise<string[]> {
     const resp = await fetch(url, { method: 'GET', headers, cache: 'no-store' })
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
     const json = await resp.json()
-    const list: unknown[] = Array.isArray(json) ? json : Array.isArray(json?.data) ? json.data : []
-    const ids = list
-      .map((item) => (typeof item === 'string' ? item : typeof (item as { id?: unknown })?.id === 'string' ? (item as { id: string }).id : ''))
-      .filter(Boolean)
-    const models = Array.from(new Set(ids))
+    const models = extractModelIds(json)
     if (models.length) return models
   } catch {
     // Hosted Flask helper below understands NewAPI/SubAPI routing and is kept as a fallback.

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PLAYGROUND_MODEL_CHANNELS_STORAGE_KEY } from './playgroundChannels'
-import { getChannelModels } from './modelCatalog'
+import { extractModelIds, getChannelModels } from './modelCatalog'
 
 function stubLocalStorage(initial: Record<string, string> = {}) {
   const store = new Map(Object.entries(initial))
@@ -22,6 +22,20 @@ afterEach(() => {
 })
 
 describe('model catalog', () => {
+  it('extracts model ids from common relay response shapes', () => {
+    const ids = extractModelIds({
+      models: ['sora-2'],
+      data: {
+        models: [{ id: 'veo-3.0-generate-preview' }],
+      },
+      result: {
+        data: [{ model: 'jimeng-vgfm' }],
+      },
+    })
+    expect(ids).toEqual(expect.arrayContaining(['sora-2', 'veo-3.0-generate-preview', 'jimeng-vgfm']))
+    expect(ids).toHaveLength(3)
+  })
+
   it('fetches the real channel model list once without purpose routing and filters locally', async () => {
     stubLocalStorage({
       [PLAYGROUND_MODEL_CHANNELS_STORAGE_KEY]: JSON.stringify([
