@@ -24,7 +24,7 @@ export const DEFAULT_PLAYGROUND_MODEL_CHANNELS: PlaygroundModelChannel[] = [
     id: 'subapi',
     name: 'YY SubAPI',
     apiFormat: 'openai',
-    baseUrl: 'https://yysubapi.yangyangnj.top/',
+    baseUrl: 'https://yysubapi.yangyangnj.top/v1',
     apiKey: '',
     models: [],
   },
