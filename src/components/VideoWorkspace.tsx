@@ -356,6 +356,7 @@ export default function VideoWorkspace() {
   const removeTask = useVideoStore((s) => s.removeTask)
   const showToast = useStore((s) => s.showToast)
   const setShowPromptLibrary = useStore((s) => s.setShowPromptLibrary)
+  const videoProfileModel = useStore((s) => s.settings.profiles.find((profile) => profile.id === 'yy-video-profile')?.model)
   const abortRef = useRef<Record<string, AbortController>>({})
   const fileInputRef = useRef<HTMLInputElement>(null)
   const promptInputRef = useRef<HTMLDivElement>(null)
@@ -410,6 +411,11 @@ export default function VideoWorkspace() {
   useEffect(() => {
     if (detailTaskId && !detailTask) setDetailTaskId(null)
   }, [detailTask, detailTaskId])
+
+  useEffect(() => {
+    const nextModel = videoProfileModel?.trim()
+    if (nextModel && nextModel !== params.model) setParams({ model: nextModel })
+  }, [params.model, setParams, videoProfileModel])
 
   useEffect(() => {
     const el = promptInputRef.current

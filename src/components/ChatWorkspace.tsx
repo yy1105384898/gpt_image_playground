@@ -37,6 +37,7 @@ function getActiveConversation(conversations: ChatConversation[], activeId: stri
 }
 
 export default function ChatWorkspace() {
+  const settings = useStore((s) => s.settings)
   const conversations = useChatStore((s) => s.conversations)
   const activeConversationId = useChatStore((s) => s.activeConversationId)
   const input = useChatStore((s) => s.input)
@@ -55,12 +56,24 @@ export default function ChatWorkspace() {
   const activeConversation = getActiveConversation(conversations, activeConversationId, model)
   const messages = activeConversation?.messages ?? []
   const activeTarget = activeConversation?.channelTarget || getPlaygroundApiChannelTarget('text')
+  const settingsTextProfile = useMemo(() => (
+    settings.profiles.find((profile) => profile.id === TEXT_PROFILE_ID)
+      ?? settings.profiles.find((profile) => profile.provider === 'openai' && profile.apiMode === 'responses')
+      ?? settings.profiles.find((profile) => profile.id === settings.activeProfileId)
+      ?? settings.profiles[0]
+  ), [settings])
   const abortRef = useRef<AbortController | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!activeConversation && conversations.length === 0) createConversation()
   }, [activeConversation, conversations.length, createConversation])
+
+  useEffect(() => {
+    const nextModel = settingsTextProfile?.model?.trim()
+    if (!nextModel) return
+    setModel(nextModel, getPlaygroundApiChannelTarget('text'))
+  }, [settingsTextProfile?.model, setModel])
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: 'end' })

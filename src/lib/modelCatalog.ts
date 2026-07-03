@@ -35,8 +35,8 @@ const SIMPLIFIED_PROFILE_IDS: Record<PlaygroundApiPurpose, string> = {
   video: 'yy-video-profile',
 }
 
-const VIDEO_RE = /video|sora|kling|veo|seedance|runway|pika|hailuo|vidu|wan2|minimax-video/i
-const IMAGE_RE = /image|flux|dall[-_ ]?e|imagen|nano[-_ ]?banana|banana|qwen.*image|stable|\bsd\d|midjourney|\bmj\b|recraft|ideogram|seedream|kolors|hunyuan.*image|grok.*image/i
+const VIDEO_RE = /video|sora|kling|veo\d*|seedance|seedvideo|runway|pika|hailuo|vidu|wan(?:\d|x)|t2v|i2v|minimax(?:[-_ ].*)?video|minimax.*hailuo|hunyuan.*video|cogvideo|pixverse|luma|ray[-_ ]?\d?|dream[-_ ]?machine/i
+const IMAGE_RE = /image|img|images|flux|dall[-_ ]?e|imagen|nano[-_ ]?banana|banana|qwen.*image|qwen.*edit|stable|\bsd(?:\d|xl)|midjourney|\bmj\b|recraft|ideogram|seedream|kolors|hunyuan.*image|grok.*image|gpt[-_ ]?image|jimeng|dreamina|doubao.*seedream|cogview|hidream|wan(?:\d|x).*t2i|i2i|text[-_ ]?to[-_ ]?image/i
 const AUDIO_RE = /audio|tts|speech|voice|music|sound/i
 const SELECTED_MODELS_STORAGE_KEY = 'yy-image-pro.selected-models'
 const CHANNEL_MODELS_STORAGE_KEY = 'yy-image-pro.channel-model-cache'
