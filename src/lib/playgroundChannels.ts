@@ -14,7 +14,7 @@ export const PLAYGROUND_MODEL_CHANNELS_STORAGE_KEY = 'yy-image-pro.model-channel
 export const DEFAULT_PLAYGROUND_MODEL_CHANNELS: PlaygroundModelChannel[] = [
   {
     id: 'newapi',
-    name: 'NewAPI',
+    name: 'YY NewAPI',
     apiFormat: 'openai',
     baseUrl: 'https://yynewapi.yangyangnj.top/v1',
     apiKey: '',
@@ -22,13 +22,22 @@ export const DEFAULT_PLAYGROUND_MODEL_CHANNELS: PlaygroundModelChannel[] = [
   },
   {
     id: 'subapi',
-    name: 'SubAPI',
+    name: 'YY SubAPI',
     apiFormat: 'openai',
-    baseUrl: 'https://yysubapi.yangyangnj.top/v1',
+    baseUrl: 'https://yysubapi.yangyangnj.top/',
     apiKey: '',
     models: [],
   },
 ]
+
+export const PROTECTED_PLAYGROUND_MODEL_CHANNEL_IDS = new Set(
+  DEFAULT_PLAYGROUND_MODEL_CHANNELS.map((channel) => channel.id),
+)
+
+export function isProtectedPlaygroundModelChannel(channelOrId: PlaygroundModelChannel | string): boolean {
+  const id = typeof channelOrId === 'string' ? channelOrId : channelOrId.id
+  return PROTECTED_PLAYGROUND_MODEL_CHANNEL_IDS.has(id)
+}
 
 function newChannelId() {
   return `channel-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
@@ -88,6 +97,22 @@ function normalizeChannel(input: unknown, fallback?: PlaygroundModelChannel): Pl
   }
 }
 
+function protectedChannelMatchKey(channel: PlaygroundModelChannel): string {
+  return normalizePlaygroundBaseUrl(channel.baseUrl).toLowerCase()
+}
+
+function mergeProtectedChannel(defaultChannel: PlaygroundModelChannel, channels: PlaygroundModelChannel[]): PlaygroundModelChannel {
+  const defaultTarget = protectedChannelMatchKey(defaultChannel)
+  const saved = channels.find((channel) => {
+    return channel.id === defaultChannel.id || protectedChannelMatchKey(channel) === defaultTarget
+  })
+  return {
+    ...defaultChannel,
+    apiKey: saved?.apiKey ?? defaultChannel.apiKey,
+    models: uniqueModels(saved?.models ?? defaultChannel.models),
+  }
+}
+
 function normalizeChannels(input: unknown): PlaygroundModelChannel[] {
   if (!Array.isArray(input)) return DEFAULT_PLAYGROUND_MODEL_CHANNELS
   const seen = new Set<string>()
@@ -100,7 +125,12 @@ function normalizeChannels(input: unknown): PlaygroundModelChannel[] {
       seen.add(id)
       return { ...channel, id }
     })
-  return channels.length ? channels : DEFAULT_PLAYGROUND_MODEL_CHANNELS
+  const protectedChannels = DEFAULT_PLAYGROUND_MODEL_CHANNELS.map((defaultChannel) => mergeProtectedChannel(defaultChannel, channels))
+  const protectedTargets = new Set(protectedChannels.map((channel) => protectedChannelMatchKey(channel)))
+  const customChannels = channels.filter((channel) => {
+    return !isProtectedPlaygroundModelChannel(channel) && !protectedTargets.has(protectedChannelMatchKey(channel))
+  })
+  return [...protectedChannels, ...customChannels]
 }
 
 export function createPlaygroundModelChannel(patch: Partial<PlaygroundModelChannel> = {}): PlaygroundModelChannel {

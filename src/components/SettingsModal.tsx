@@ -39,6 +39,7 @@ import {
   getPlaygroundModelChannelRef,
   getPlaygroundModelChannelTarget,
   getPlaygroundModelChannels,
+  isProtectedPlaygroundModelChannel,
   savePlaygroundModelChannels,
   resolvePlaygroundModelChannelTarget,
   type PlaygroundApiFormat,
@@ -928,11 +929,17 @@ export default function SettingsModal() {
   }
 
   const updateChannel = (id: string, patch: Partial<PlaygroundModelChannel>) => {
+    const safePatch = isProtectedPlaygroundModelChannel(id)
+      ? {
+          ...(patch.apiKey !== undefined ? { apiKey: patch.apiKey } : {}),
+          ...(patch.models !== undefined ? { models: patch.models } : {}),
+        }
+      : patch
     saveChannels(modelChannels.map((channel) => channel.id === id
       ? {
           ...channel,
-          ...patch,
-          models: patch.models ? uniqueModelOptions(patch.models) : channel.models,
+          ...safePatch,
+          models: safePatch.models ? uniqueModelOptions(safePatch.models) : channel.models,
         }
       : channel,
     ))
@@ -988,6 +995,10 @@ export default function SettingsModal() {
   }
 
   const deleteChannel = (id: string) => {
+    if (isProtectedPlaygroundModelChannel(id)) {
+      showToast('内置中转渠道不能删除', 'info')
+      return
+    }
     if (modelChannels.length <= 1) {
       showToast('至少保留一个渠道', 'info')
       return
@@ -1857,13 +1868,19 @@ export default function SettingsModal() {
                       {modelChannels.map((channel) => {
                         const target = channelTarget(channel)
                         const expanded = isChannelExpanded(channel.id)
-                        const channelUrl = channelApiTarget(channel)
+                        const channelUrl = channel.baseUrl.trim() || channelApiTarget(channel)
+                        const protectedChannel = isProtectedPlaygroundModelChannel(channel)
                         return (
                           <section key={channel.id} className="rounded-2xl border border-gray-200/70 bg-white/85 p-4 shadow-sm dark:border-white/[0.08] dark:bg-white/[0.03]">
                             <div className={`${expanded ? 'mb-4' : ''} flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between`}>
                               <div className="min-w-0">
                                 <div className="flex min-w-0 flex-wrap items-center gap-2">
                                   <div className="truncate text-sm font-bold text-gray-900 dark:text-gray-50">{channel.name || '未命名渠道'}</div>
+                                  {protectedChannel && (
+                                    <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300">
+                                      内置
+                                    </span>
+                                  )}
                                   <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-semibold text-gray-500 dark:bg-white/[0.08] dark:text-gray-300">
                                     {channel.apiFormat === 'gemini' ? 'Gemini' : 'OpenAI'}
                                   </span>
@@ -1896,8 +1913,10 @@ export default function SettingsModal() {
                                 <button
                                   type="button"
                                   onClick={() => deleteChannel(channel.id)}
-                                  className="rounded-lg border border-red-200/80 bg-white p-2 text-red-500 transition hover:bg-red-50 dark:border-red-500/30 dark:bg-white/[0.04] dark:text-red-300 dark:hover:bg-red-500/10"
-                                  aria-label="删除渠道"
+                                  disabled={protectedChannel}
+                                  className="rounded-lg border border-red-200/80 bg-white p-2 text-red-500 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:border-gray-200/80 disabled:text-gray-300 disabled:hover:bg-white dark:border-red-500/30 dark:bg-white/[0.04] dark:text-red-300 dark:hover:bg-red-500/10 dark:disabled:border-white/[0.08] dark:disabled:text-gray-600 dark:disabled:hover:bg-white/[0.04]"
+                                  aria-label={protectedChannel ? '内置中转渠道不能删除' : '删除渠道'}
+                                  title={protectedChannel ? '内置中转渠道不能删除' : '删除渠道'}
                                 >
                                   <TrashIcon className="h-3.5 w-3.5" />
                                 </button>
@@ -1911,7 +1930,8 @@ export default function SettingsModal() {
                                 <input
                                   value={channel.name}
                                   onChange={(event) => updateChannel(channel.id, { name: event.target.value })}
-                                  className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                                  disabled={protectedChannel}
+                                  className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 disabled:cursor-not-allowed disabled:bg-gray-100/60 disabled:text-gray-400 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50 dark:disabled:bg-white/[0.05] dark:disabled:text-gray-500"
                                 />
                               </label>
                               <label className="block">
@@ -1920,6 +1940,7 @@ export default function SettingsModal() {
                                   value={channel.apiFormat}
                                   onChange={(value) => updateChannelApiFormat(channel, value as PlaygroundApiFormat)}
                                   options={API_FORMAT_OPTIONS}
+                                  disabled={protectedChannel}
                                   className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
                                 />
                               </label>
@@ -1930,7 +1951,8 @@ export default function SettingsModal() {
                                   onChange={(event) => updateChannel(channel.id, { baseUrl: event.target.value })}
                                   onBlur={(event) => updateChannel(channel.id, { baseUrl: event.target.value.trim().replace(/\/+$/, '') })}
                                   placeholder="https://api.openai.com/v1"
-                                  className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                                  disabled={protectedChannel}
+                                  className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 disabled:cursor-not-allowed disabled:bg-gray-100/60 disabled:text-gray-400 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50 dark:disabled:bg-white/[0.05] dark:disabled:text-gray-500"
                                 />
                               </label>
                               <label className="block">
