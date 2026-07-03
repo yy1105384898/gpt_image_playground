@@ -34,6 +34,7 @@ import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { DEFAULT_DROPDOWN_MAX_HEIGHT, getDropdownMaxHeight } from '../lib/dropdown'
 import { getChannelModelList, getChannelModels, getDefaultSelectedModels, getSelectedModels, inferPurposeFromLabel, invalidateModelCatalogCache, isModelForPurpose, isModelForPurposeWithHint, setSelectedModels } from '../lib/modelCatalog'
 import { uniqueModelIds } from '../lib/modelIds'
+import { fetchChannelPricingSnapshot, findModelPricing, modelPricingLabel, type ChannelPricingSnapshot } from '../lib/modelPricing'
 import { getStoredPlaygroundPurposeConfig, savePlaygroundPurposeConfig } from '../lib/playgroundPurposeConfig'
 import {
   createPlaygroundModelChannel,
@@ -434,6 +435,7 @@ export default function SettingsModal() {
   const [tokenVaultNames, setTokenVaultNames] = useState<Record<string, string>>({})
   const [, setModelPickerVersion] = useState(0)
   const [modelPickerState, setModelPickerState] = useState<Record<string, { loading: boolean; models: string[] }>>({})
+  const [modelPricingSnapshots, setModelPricingSnapshots] = useState<Record<string, ChannelPricingSnapshot>>({})
   const [showProfileMenu, setShowProfileMenu] = useState(false)
   const [profileMenuMaxHeight, setProfileMenuMaxHeight] = useState(DEFAULT_DROPDOWN_MAX_HEIGHT)
   const [showCustomProviderImport, setShowCustomProviderImport] = useState(false)
@@ -584,6 +586,25 @@ export default function SettingsModal() {
   const getPurposeSelectedModels = (purpose: PlaygroundApiPurpose, target = getPurposeChannelTarget(purpose)) => getSelectedModels(target, purpose)
   const defaultProviderOrder = ['openai', 'fal', ...draft.customProviders.map(p => p.id)]
   const providerOrder = draft.providerOrder || defaultProviderOrder
+
+  useEffect(() => {
+    let cancelled = false
+    const targets = Array.from(new Set(getPlaygroundModelChannelBindings(modelChannels).map((binding) => binding.target)))
+    targets.forEach((pricingTarget) => {
+      fetchChannelPricingSnapshot(resolvePlaygroundModelChannelTarget(pricingTarget))
+        .then((snapshot) => {
+          if (!cancelled) setModelPricingSnapshots((state) => ({ ...state, [pricingTarget]: snapshot }))
+        })
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [modelChannels])
+
+  const modelPriceLabel = (target: string, model: string) => {
+    const pricingTarget = findBindingByRef(target)?.target ?? target
+    return modelPricingLabel(findModelPricing(modelPricingSnapshots[pricingTarget], model))
+  }
 
   const unorderedProviderOptions = [
     { label: 'OpenAI 兼容接口', value: 'openai', draggable: true },
@@ -1358,17 +1379,21 @@ export default function SettingsModal() {
       const target = binding.target
       const pickerModels = modelPickerState[`${purpose}:${target}`]?.models ?? []
       return bindingModelsForPurpose(binding, purpose, [...binding.models, ...pickerModels])
-        .map((model) => ({
-          target,
-          model,
-          label: `${model}（${binding.label || '未命名令牌'}）`,
-        }))
+        .map((model) => {
+          const price = modelPriceLabel(target, model)
+          return {
+            target,
+            model,
+            label: `${model}（${binding.label || '未命名令牌'}）${price ? ` · ${price}` : ''}`,
+          }
+        })
     })
     if (currentModel && isModelAllowedForPurpose(getPurposeChannelTarget(purpose), currentModel, purpose) && !entries.some((entry) => entry.target === getPurposeChannelTarget(purpose) && entry.model === currentModel)) {
+      const price = modelPriceLabel(getPurposeChannelTarget(purpose), currentModel)
       entries.unshift({
         target: getPurposeChannelTarget(purpose),
         model: currentModel,
-        label: `${currentModel}（当前默认）`,
+        label: `${currentModel}（当前默认）${price ? ` · ${price}` : ''}`,
       })
     }
     return entries
@@ -2288,6 +2313,7 @@ export default function SettingsModal() {
                                     onChange={(models) => updateChannelKey(channel.id, primaryKey.id, { models })}
                                     placeholder="输入模型名，或点击拉取模型"
                                     className="w-full"
+                                    getMetaLabel={(model) => modelPriceLabel(getPlaygroundModelChannelKeyRef(channel, primaryKey), model)}
                                   />
                                 ) : (
                                   <div className="grid gap-2 md:grid-cols-2">
@@ -3218,6 +3244,7 @@ export default function SettingsModal() {
                             onChange={(models) => updateChannelKey(channel.id, key.id, { models })}
                             placeholder="输入模型名，或点击拉取"
                             className="w-full"
+                            getMetaLabel={(model) => modelPriceLabel(getPlaygroundModelChannelKeyRef(channel, key), model)}
                           />
                         </div>
                       </section>

@@ -1,6 +1,8 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { getSelectedModels, hasSelectedModelsConfig, useModelGroups } from '../lib/modelCatalog'
 import { getPlaygroundApiChannelTarget, type PlaygroundApiPurpose } from '../lib/devProxy'
+import { fetchChannelPricingSnapshot, findModelPricing, modelPricingLabel, type ChannelPricingSnapshot } from '../lib/modelPricing'
+import { resolvePlaygroundModelChannelTarget } from '../lib/playgroundChannels'
 
 const SEP = '::yy-model::'
 
@@ -21,6 +23,7 @@ interface ModelSelectProps {
 // the relay's /v1/models. Falls back to a static list when nothing loads.
 export default function ModelSelect({ purpose, value, target, showAllChannels = false, onSelect, fallbackModels = [], enabled = true, className }: ModelSelectProps) {
   const { groups, loading } = useModelGroups(purpose, enabled)
+  const [pricingSnapshots, setPricingSnapshots] = useState<Record<string, ChannelPricingSnapshot>>({})
   const activeTarget = target || getPlaygroundApiChannelTarget(purpose)
   const activeGroups = useMemo(() => showAllChannels ? groups : groups.filter((group) => group.target === activeTarget), [activeTarget, groups, showAllChannels])
   const displayGroups = useMemo(() => activeGroups.map((group) => {
@@ -33,6 +36,26 @@ export default function ModelSelect({ purpose, value, target, showAllChannels = 
   }), [activeGroups, activeTarget, purpose, value])
 
   const hasGroups = displayGroups.length > 0
+  useEffect(() => {
+    if (!enabled) return
+    let cancelled = false
+    const targets = Array.from(new Set([activeTarget, ...displayGroups.map((group) => group.target)].filter(Boolean)))
+    targets.forEach((pricingTarget) => {
+      fetchChannelPricingSnapshot(resolvePlaygroundModelChannelTarget(pricingTarget))
+        .then((snapshot) => {
+          if (!cancelled) setPricingSnapshots((state) => ({ ...state, [pricingTarget]: snapshot }))
+        })
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [activeTarget, displayGroups, enabled])
+
+  const modelLabel = (pricingTarget: string, model: string) => {
+    const price = modelPricingLabel(findModelPricing(pricingSnapshots[pricingTarget], model))
+    return price ? `${model}  ·  ${price}` : model
+  }
+
   useEffect(() => {
     if (!enabled || loading || !hasGroups) return
     if (displayGroups.some((group) => group.models.includes(value))) return
@@ -66,18 +89,18 @@ export default function ModelSelect({ purpose, value, target, showAllChannels = 
     >
       {!hasGroups && (
         <>
-          <option value={`${SEP}${value}`}>{value || (loading ? '加载模型…' : '默认模型')}</option>
+          <option value={`${SEP}${value}`}>{value ? modelLabel(activeTarget, value) : (loading ? '加载模型…' : '默认模型')}</option>
           {fallbackModels
             .filter((m) => m !== value)
             .map((m) => (
-              <option key={m} value={`${SEP}${m}`}>{m}</option>
+              <option key={m} value={`${SEP}${m}`}>{modelLabel(activeTarget, m)}</option>
             ))}
         </>
       )}
       {hasGroups && displayGroups.map((g) => (
         <optgroup key={g.id} label={g.label}>
           {g.models.map((m) => (
-            <option key={`${g.id}-${m}`} value={`${g.target}${SEP}${m}`}>{m}</option>
+            <option key={`${g.id}-${m}`} value={`${g.target}${SEP}${m}`}>{modelLabel(g.target, m)}</option>
           ))}
         </optgroup>
       ))}
