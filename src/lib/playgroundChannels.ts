@@ -39,6 +39,15 @@ export function isProtectedPlaygroundModelChannel(channelOrId: PlaygroundModelCh
   return PROTECTED_PLAYGROUND_MODEL_CHANNEL_IDS.has(id)
 }
 
+function getProtectedPlaygroundModelChannel(channelOrId: PlaygroundModelChannel | string): PlaygroundModelChannel | null {
+  const id = typeof channelOrId === 'string' ? channelOrId : channelOrId.id
+  return DEFAULT_PLAYGROUND_MODEL_CHANNELS.find((channel) => channel.id === id) ?? null
+}
+
+export function getProtectedPlaygroundModelChannelBaseUrl(channelOrId: PlaygroundModelChannel | string): string | null {
+  return getProtectedPlaygroundModelChannel(channelOrId)?.baseUrl ?? null
+}
+
 function newChannelId() {
   return `channel-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }
@@ -108,6 +117,8 @@ function mergeProtectedChannel(defaultChannel: PlaygroundModelChannel, channels:
   })
   return {
     ...defaultChannel,
+    name: saved?.name?.trim() || defaultChannel.name,
+    apiFormat: saved?.apiFormat ?? defaultChannel.apiFormat,
     apiKey: saved?.apiKey ?? defaultChannel.apiKey,
     models: uniqueModels(saved?.models ?? defaultChannel.models),
   }

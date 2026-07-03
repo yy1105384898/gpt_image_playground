@@ -39,6 +39,7 @@ import {
   getPlaygroundModelChannelRef,
   getPlaygroundModelChannelTarget,
   getPlaygroundModelChannels,
+  getProtectedPlaygroundModelChannelBaseUrl,
   isProtectedPlaygroundModelChannel,
   savePlaygroundModelChannels,
   resolvePlaygroundModelChannelTarget,
@@ -931,6 +932,8 @@ export default function SettingsModal() {
   const updateChannel = (id: string, patch: Partial<PlaygroundModelChannel>) => {
     const safePatch = isProtectedPlaygroundModelChannel(id)
       ? {
+          ...(patch.name !== undefined ? { name: patch.name } : {}),
+          ...(patch.apiFormat !== undefined ? { apiFormat: patch.apiFormat } : {}),
           ...(patch.apiKey !== undefined ? { apiKey: patch.apiKey } : {}),
           ...(patch.models !== undefined ? { models: patch.models } : {}),
         }
@@ -1868,8 +1871,9 @@ export default function SettingsModal() {
                       {modelChannels.map((channel) => {
                         const target = channelTarget(channel)
                         const expanded = isChannelExpanded(channel.id)
-                        const channelUrl = channel.baseUrl.trim() || channelApiTarget(channel)
                         const protectedChannel = isProtectedPlaygroundModelChannel(channel)
+                        const channelDisplayBaseUrl = getProtectedPlaygroundModelChannelBaseUrl(channel) ?? channel.baseUrl
+                        const channelUrl = channelDisplayBaseUrl.trim() || channelApiTarget(channel)
                         return (
                           <section key={channel.id} className="rounded-2xl border border-gray-200/70 bg-white/85 p-4 shadow-sm dark:border-white/[0.08] dark:bg-white/[0.03]">
                             <div className={`${expanded ? 'mb-4' : ''} flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between`}>
@@ -1930,8 +1934,7 @@ export default function SettingsModal() {
                                 <input
                                   value={channel.name}
                                   onChange={(event) => updateChannel(channel.id, { name: event.target.value })}
-                                  disabled={protectedChannel}
-                                  className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 disabled:cursor-not-allowed disabled:bg-gray-100/60 disabled:text-gray-400 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50 dark:disabled:bg-white/[0.05] dark:disabled:text-gray-500"
+                                  className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
                                 />
                               </label>
                               <label className="block">
@@ -1940,14 +1943,13 @@ export default function SettingsModal() {
                                   value={channel.apiFormat}
                                   onChange={(value) => updateChannelApiFormat(channel, value as PlaygroundApiFormat)}
                                   options={API_FORMAT_OPTIONS}
-                                  disabled={protectedChannel}
                                   className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
                                 />
                               </label>
                               <label className="block">
                                 <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">Base URL</span>
                                 <input
-                                  value={channel.baseUrl}
+                                  value={channelDisplayBaseUrl}
                                   onChange={(event) => updateChannel(channel.id, { baseUrl: event.target.value })}
                                   onBlur={(event) => updateChannel(channel.id, { baseUrl: event.target.value.trim().replace(/\/+$/, '') })}
                                   placeholder="https://api.openai.com/v1"

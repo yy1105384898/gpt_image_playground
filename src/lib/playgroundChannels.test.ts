@@ -44,7 +44,7 @@ describe('playground model channels', () => {
     expect(channels.slice(0, 2).every(isProtectedPlaygroundModelChannel)).toBe(true)
   })
 
-  it('preserves relay api keys and models while restoring protected relay metadata', () => {
+  it('hardcodes protected relay urls without resetting other saved settings', () => {
     stubLocalStorage({
       [PLAYGROUND_MODEL_CHANNELS_STORAGE_KEY]: JSON.stringify([
         {
@@ -62,8 +62,8 @@ describe('playground model channels', () => {
 
     expect(channels[1]).toMatchObject({
       id: 'subapi',
-      name: 'YY SubAPI',
-      apiFormat: 'openai',
+      name: '被改名',
+      apiFormat: 'gemini',
       baseUrl: 'https://yysubapi.yangyangnj.top/v1',
       apiKey: 'sub-key',
       models: ['sora-2'],
