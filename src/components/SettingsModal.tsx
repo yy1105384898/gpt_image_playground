@@ -428,6 +428,7 @@ export default function SettingsModal() {
   const [apiConfigTab, setApiConfigTab] = useState<'channels' | 'models'>('channels')
   const [modelChannels, setModelChannels] = useState<PlaygroundModelChannel[]>(getPlaygroundModelChannels)
   const [loadingChannelId, setLoadingChannelId] = useState<string>('')
+  const [expandedChannelIds, setExpandedChannelIds] = useState<string[]>([])
   const [apiChannelTargets, setApiChannelTargets] = useState(() => ({
     text: getPlaygroundApiChannelTarget('text'),
     image: getPlaygroundApiChannelTarget('image'),
@@ -937,6 +938,12 @@ export default function SettingsModal() {
     ))
   }
 
+  const isChannelExpanded = (id: string) => expandedChannelIds.includes(id)
+
+  const toggleChannelExpanded = (id: string) => {
+    setExpandedChannelIds((ids) => ids.includes(id) ? ids.filter((item) => item !== id) : [...ids, id])
+  }
+
   const reconcileFetchedPurposeModels = (target: string, purpose: PlaygroundApiPurpose, purposeModels: string[]) => {
     const fetchedModels = uniqueModelOptions(purposeModels).filter((model) => isModelForPurpose(model, purpose))
     const actualModelSet = new Set(fetchedModels)
@@ -975,7 +982,9 @@ export default function SettingsModal() {
   }
 
   const addChannel = () => {
-    saveChannels([...modelChannels, createPlaygroundModelChannel({ name: `渠道 ${modelChannels.length + 1}` })])
+    const nextChannel = createPlaygroundModelChannel({ name: `渠道 ${modelChannels.length + 1}` })
+    saveChannels([...modelChannels, nextChannel])
+    setExpandedChannelIds((ids) => Array.from(new Set([...ids, nextChannel.id])))
   }
 
   const deleteChannel = (id: string) => {
@@ -984,6 +993,7 @@ export default function SettingsModal() {
       return
     }
     saveChannels(modelChannels.filter((channel) => channel.id !== id))
+    setExpandedChannelIds((ids) => ids.filter((item) => item !== id))
   }
 
   const refreshChannelModels = async (channel: PlaygroundModelChannel) => {
@@ -1846,16 +1856,26 @@ export default function SettingsModal() {
                     <div className="space-y-3">
                       {modelChannels.map((channel) => {
                         const target = channelTarget(channel)
+                        const expanded = isChannelExpanded(channel.id)
+                        const channelUrl = channelApiTarget(channel)
                         return (
                           <section key={channel.id} className="rounded-2xl border border-gray-200/70 bg-white/85 p-4 shadow-sm dark:border-white/[0.08] dark:bg-white/[0.03]">
-                            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <div className={`${expanded ? 'mb-4' : ''} flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between`}>
                               <div className="min-w-0">
-                                <div className="truncate text-sm font-bold text-gray-900 dark:text-gray-50">{channel.name || '未命名渠道'}</div>
-                                <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                                  {channel.apiFormat === 'gemini' ? 'Gemini' : 'OpenAI'} · 已保存 {channel.models.length} 个模型
+                                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                                  <div className="truncate text-sm font-bold text-gray-900 dark:text-gray-50">{channel.name || '未命名渠道'}</div>
+                                  <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-semibold text-gray-500 dark:bg-white/[0.08] dark:text-gray-300">
+                                    {channel.apiFormat === 'gemini' ? 'Gemini' : 'OpenAI'}
+                                  </span>
+                                  <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-600 dark:bg-blue-500/10 dark:text-blue-300">
+                                    {channel.models.length} 个模型
+                                  </span>
+                                </div>
+                                <div className="mt-1 min-w-0 truncate text-xs text-gray-500 dark:text-gray-400" title={channelUrl || target}>
+                                  {channelUrl || target || '未填写站点'}
                                 </div>
                               </div>
-                              <div className="flex shrink-0 gap-2">
+                              <div className="flex shrink-0 flex-wrap gap-2">
                                 <button
                                   type="button"
                                   onClick={() => void refreshChannelModels(channel)}
@@ -1863,6 +1883,15 @@ export default function SettingsModal() {
                                   className="rounded-lg border border-gray-200/80 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 transition hover:bg-gray-100 disabled:cursor-wait disabled:opacity-60 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200 dark:hover:bg-white/[0.08]"
                                 >
                                   {loadingChannelId === channel.id ? '拉取中…' : '拉取模型'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => toggleChannelExpanded(channel.id)}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-gray-200/80 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 transition hover:bg-gray-100 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200 dark:hover:bg-white/[0.08]"
+                                  aria-expanded={expanded}
+                                >
+                                  <ChevronDownIcon className={`h-3.5 w-3.5 transition ${expanded ? 'rotate-180' : ''}`} />
+                                  {expanded ? '收起' : '展开'}
                                 </button>
                                 <button
                                   type="button"
@@ -1875,6 +1904,7 @@ export default function SettingsModal() {
                               </div>
                             </div>
 
+                            {expanded && (
                             <div className="grid gap-4 md:grid-cols-2">
                               <label className="block">
                                 <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">渠道名称</span>
@@ -1925,7 +1955,7 @@ export default function SettingsModal() {
                               <div className="md:col-span-2">
                                 <div className="mb-1.5 flex items-center justify-between gap-2">
                                   <span className="block text-sm text-gray-600 dark:text-gray-300">模型列表</span>
-                                  <span className="truncate text-[11px] text-gray-400" title={channelApiTarget(channel)}>{channelApiTarget(channel)}</span>
+                                  <span className="truncate text-[11px] text-gray-400" title={channelUrl}>{channelUrl}</span>
                                 </div>
                                 <ModelMultiSelect
                                   value={channel.models}
@@ -1935,6 +1965,7 @@ export default function SettingsModal() {
                                 />
                               </div>
                             </div>
+                            )}
                           </section>
                         )
                       })}
