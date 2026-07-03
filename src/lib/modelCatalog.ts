@@ -11,9 +11,10 @@ import {
   type PlaygroundApiPurpose,
 } from './devProxy'
 import {
-  findPlaygroundModelChannelByTarget,
-  getPlaygroundModelChannelRef,
-  getPlaygroundModelChannelTarget,
+  getPlaygroundModelChannelApiKey,
+  getPlaygroundModelChannelBindings,
+  getPlaygroundModelChannelLabel,
+  getPlaygroundModelChannelModels,
   getPlaygroundModelChannels,
   resolvePlaygroundModelChannelTarget,
 } from './playgroundChannels'
@@ -212,13 +213,12 @@ function tokenForTargetPurpose(target: string, purpose: PlaygroundApiPurpose): s
   const matchedToken = items.find((item) => matcher.test(item.name))?.token
   if (matchedToken) return matchedToken
   if (items.length === 1) return items[0].token
-  const channel = findPlaygroundModelChannelByTarget(target)
-  return channel?.apiKey.trim() ?? ''
+  return getPlaygroundModelChannelApiKey(target)
 }
 
 function tokenForTarget(target: string): string {
-  const channel = findPlaygroundModelChannelByTarget(target)
-  if (channel?.apiKey.trim()) return channel.apiKey.trim()
+  const channelApiKey = getPlaygroundModelChannelApiKey(target)
+  if (channelApiKey) return channelApiKey
   for (const purpose of ['image', 'video', 'text'] as const) {
     const token = tokenForTargetPurpose(target, purpose)
     if (token.trim()) return token
@@ -285,8 +285,8 @@ async function fetchChannelModels(target: string): Promise<string[]> {
 
 export async function getChannelModelList(target: string, force = false): Promise<string[]> {
   const rawKey = channelModelsKey(target)
-  const channel = findPlaygroundModelChannelByTarget(target)
-  if (!force && channel?.models.length) return channel.models
+  const channelModels = getPlaygroundModelChannelModels(target)
+  if (!force && channelModels.length) return channelModels
   if (!force && channelModelCache.has(rawKey)) {
     return channelModelCache.get(rawKey)!
   }
@@ -316,7 +316,7 @@ export async function getChannelModels(target: string, purpose: PlaygroundApiPur
   const key = selectedModelsKey(target, purpose)
   if (!force && channelModelCache.has(key)) return channelModelCache.get(key)!
   const all = await getChannelModelList(target, force)
-  const hint = inferPurposeFromLabel(findPlaygroundModelChannelByTarget(target)?.name ?? '')
+  const hint = inferPurposeFromLabel(getPlaygroundModelChannelLabel(target))
   const models = all.filter((model) => isModelForPurposeWithHint(model, purpose, hint))
   channelModelCache.set(key, models)
   return models
@@ -344,20 +344,20 @@ export async function getModelGroups(purpose: PlaygroundApiPurpose, force = fals
   if (!force && cache.has(purpose)) return cache.get(purpose)!
   if (!force && inflight.has(purpose)) return inflight.get(purpose)!
   const task = (async () => {
-    const channels = getPlaygroundModelChannels()
+    const bindings = getPlaygroundModelChannelBindings(getPlaygroundModelChannels())
     const results = await Promise.all(
-      channels.map(async (channel) => {
-        const target = getPlaygroundModelChannelRef(channel)
+      bindings.map(async (binding) => {
+        const target = binding.target
         try {
           const allModels = await getChannelModels(target, purpose, force)
-          const hint = inferPurposeFromLabel(channel.name)
+          const hint = inferPurposeFromLabel(binding.label)
           const selected = getSelectedModels(target, purpose)
           const allowed = hasSelectedModelsConfig(target, purpose)
             ? allModels.filter((id) => selected.includes(id) && isModelForPurposeWithHint(id, purpose, hint))
             : allModels.filter((id) => isModelForPurposeWithHint(id, purpose, hint))
-          return { id: channel.id, label: channel.name, target, models: allowed }
+          return { id: binding.id, label: binding.label, target, models: allowed }
         } catch {
-          return { id: channel.id, label: channel.name, target, models: [] }
+          return { id: binding.id, label: binding.label, target, models: [] }
         }
       }),
     )

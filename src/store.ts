@@ -47,7 +47,7 @@ import { collectAgentRoundOutputImageSlots, extractAgentReferenceIds, getAgentCu
 import { showBrowserNotification } from './lib/browserNotification'
 import { IMAGE_FETCH_CORS_HINT } from './lib/imageApiShared'
 import { getPlaygroundApiChannelTarget } from './lib/devProxy'
-import { findPlaygroundModelChannelByTarget, resolvePlaygroundModelChannelTarget } from './lib/playgroundChannels'
+import { getPlaygroundModelChannelApiKey, getPlaygroundModelChannelModels, resolvePlaygroundModelChannelTarget } from './lib/playgroundChannels'
 import { getStoredPlaygroundPurposeConfig } from './lib/playgroundPurposeConfig'
 import { firstModelForPurpose, isModelForPurpose } from './lib/modelPurpose'
 import { getFalErrorMessage, getFalQueuedImageResult } from './lib/falAiImageApi'
@@ -1206,6 +1206,7 @@ export const useStore = create<AppState>()(
           selectedTaskIds: [],
           selectedFavoriteCollectionIds: [],
           agentEditingRoundId: null,
+          ...restoreAgentInputDraftState(agentInputDrafts, state.activeAgentConversationId),
         })
       },
 
@@ -1850,17 +1851,18 @@ function resolveImagePurposeApiProfile(profile: ApiProfile): ApiProfile {
   if (profile.provider !== 'openai') return profile
 
   const target = getPlaygroundApiChannelTarget('image')
-  const channel = findPlaygroundModelChannelByTarget(target)
   const storedConfig = getStoredPlaygroundPurposeConfig(target, 'image')
+  const channelApiKey = getPlaygroundModelChannelApiKey(target)
+  const channelModels = getPlaygroundModelChannelModels(target)
   const shouldBindImageChannel =
     profile.id === SIMPLIFIED_IMAGE_PROFILE_ID ||
-    Boolean(channel?.apiKey.trim() || channel?.models.length || storedConfig.apiKey?.trim() || storedConfig.model?.trim())
+    Boolean(channelApiKey || channelModels.length || storedConfig.apiKey?.trim() || storedConfig.model?.trim())
 
   if (!shouldBindImageChannel) return profile
 
   const storedModel = storedConfig.model?.trim() ?? ''
   const profileModel = profile.model.trim()
-  const channelModel = firstModelForPurpose(channel?.models, 'image')
+  const channelModel = firstModelForPurpose(channelModels, 'image')
   const model = isModelForPurpose(storedModel, 'image')
     ? storedModel
     : isModelForPurpose(profileModel, 'image')
@@ -1870,7 +1872,7 @@ function resolveImagePurposeApiProfile(profile: ApiProfile): ApiProfile {
   return {
     ...profile,
     baseUrl: resolvePlaygroundModelChannelTarget(target),
-    apiKey: channel?.apiKey.trim() || storedConfig.apiKey?.trim() || profile.apiKey,
+    apiKey: channelApiKey || storedConfig.apiKey?.trim() || profile.apiKey,
     model,
     apiMode: 'images',
     apiProxy: true,

@@ -91,6 +91,42 @@ describe('model catalog', () => {
     expect(init.headers).not.toHaveProperty('X-YY-API-Purpose')
   })
 
+  it('fetches models with the selected channel token api key', async () => {
+    stubLocalStorage({
+      [PLAYGROUND_MODEL_CHANNELS_STORAGE_KEY]: JSON.stringify([
+        {
+          id: 'relay',
+          name: '中转',
+          apiFormat: 'openai',
+          baseUrl: 'https://relay.example.com/v1',
+          apiKeys: [
+            { id: 'default', name: '生图', apiKey: 'image-key', models: [] },
+            { id: 'video', name: '视频', apiKey: 'video-key', models: [] },
+          ],
+        },
+      ]),
+    })
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: [
+          { id: 'gpt-image-2' },
+          { id: 'sora-2' },
+        ],
+      }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const models = await getChannelModels('relay::yy-key::video', 'video', true)
+
+    expect(models).toEqual(['sora-2'])
+    const [, init] = fetchMock.mock.calls[0]
+    expect(init.headers).toMatchObject({
+      Authorization: 'Bearer video-key',
+      'X-YY-API-Target': 'https://relay.example.com/v1',
+    })
+  })
+
   it('sanitizes stale selected model settings', () => {
     stubLocalStorage()
 

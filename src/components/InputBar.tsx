@@ -9,7 +9,7 @@ import { normalizeImageSize } from '../lib/size'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { getSafeBoundingClientRect } from '../lib/domRect'
 import { getPlaygroundApiChannelTarget, shouldUseApiProxy, setPlaygroundApiChannelTarget } from '../lib/devProxy'
-import { findPlaygroundModelChannelByTarget, resolvePlaygroundModelChannelTarget } from '../lib/playgroundChannels'
+import { getPlaygroundModelChannelApiKey, resolvePlaygroundModelChannelTarget } from '../lib/playgroundChannels'
 import { getStoredPlaygroundPurposeConfig, savePlaygroundPurposeConfig } from '../lib/playgroundPurposeConfig'
 import { collectAgentRoundOutputImageSlots } from '../lib/agentImageReferences'
 import { useHintTooltip } from '../hooks/useHintTooltip'
@@ -1930,10 +1930,10 @@ export default function InputBar() {
       onOpenSizePicker={() => setShowSizePicker(true)}
       modelTarget={getPlaygroundApiChannelTarget('image')}
       onModelChange={(target, model) => {
-        const channelApiKey = findPlaygroundModelChannelByTarget(target)?.apiKey
+        const channelApiKey = getPlaygroundModelChannelApiKey(target)
         const storedApiKey = getStoredPlaygroundPurposeConfig(target, 'image').apiKey
         const imageProfile = settings.profiles.find((profile) => profile.id === 'yy-image-profile')
-        const apiKey = channelApiKey?.trim() || storedApiKey?.trim() || imageProfile?.apiKey || ''
+        const apiKey = channelApiKey || storedApiKey?.trim() || imageProfile?.apiKey || ''
         setPlaygroundApiChannelTarget(target, 'image')
         savePlaygroundPurposeConfig(target, 'image', { apiKey, model })
         const imageProfileId = settings.profiles.some((p) => p.id === 'yy-image-profile')

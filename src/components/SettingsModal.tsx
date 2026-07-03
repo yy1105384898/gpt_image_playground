@@ -37,16 +37,22 @@ import { uniqueModelIds } from '../lib/modelIds'
 import { getStoredPlaygroundPurposeConfig, savePlaygroundPurposeConfig } from '../lib/playgroundPurposeConfig'
 import {
   createPlaygroundModelChannel,
-  findPlaygroundModelChannelByTarget,
+  createPlaygroundModelChannelKey,
+  getPlaygroundModelChannelApiKey,
+  getPlaygroundModelChannelBindings,
+  getPlaygroundModelChannelKeyRef,
   getPlaygroundModelChannelRef,
   getPlaygroundModelChannelTarget,
   getPlaygroundModelChannels,
   getProtectedPlaygroundModelChannelBaseUrl,
   isProtectedPlaygroundModelChannel,
+  getPrimaryPlaygroundModelChannelKey,
   savePlaygroundModelChannels,
   resolvePlaygroundModelChannelTarget,
   type PlaygroundApiFormat,
   type PlaygroundModelChannel,
+  type PlaygroundModelChannelBinding,
+  type PlaygroundModelChannelKey,
 } from '../lib/playgroundChannels'
 import Select from './Select'
 import ModelMultiSelect from './ModelMultiSelect'
@@ -171,7 +177,7 @@ function getVaultTokenForPurpose(target: string, purpose: PlaygroundApiPurpose):
 
 function resolveStoredPurposeConfig(target: string, purpose: PlaygroundApiPurpose) {
   const stored = getStoredPlaygroundPurposeConfig(target, purpose)
-  const channelApiKey = findPlaygroundModelChannelByTarget(target)?.apiKey.trim()
+  const channelApiKey = getPlaygroundModelChannelApiKey(target)
   return {
     apiKey: channelApiKey || stored?.apiKey || getVaultTokenForPurpose(target, purpose),
     model: stored?.model ?? DEFAULT_SIMPLIFIED_MODELS[purpose],
@@ -279,12 +285,12 @@ function uniqueModelOptions(models: string[]) {
   return uniqueModelIds(models)
 }
 
-function channelPurposeHint(channel: PlaygroundModelChannel): PlaygroundApiPurpose | null {
-  return inferPurposeFromLabel(`${channel.name} ${channel.id}`)
+function bindingPurposeHint(binding: PlaygroundModelChannelBinding): PlaygroundApiPurpose | null {
+  return inferPurposeFromLabel(`${binding.label} ${binding.target}`)
 }
 
-function channelModelsForPurpose(channel: PlaygroundModelChannel, purpose: PlaygroundApiPurpose, models: string[]) {
-  const hint = channelPurposeHint(channel)
+function bindingModelsForPurpose(binding: PlaygroundModelChannelBinding, purpose: PlaygroundApiPurpose, models: string[]) {
+  const hint = bindingPurposeHint(binding)
   return uniqueModelOptions(models).filter((model) => isModelForPurposeWithHint(model, purpose, hint))
 }
 
@@ -443,6 +449,7 @@ export default function SettingsModal() {
   const [modelChannels, setModelChannels] = useState<PlaygroundModelChannel[]>(getPlaygroundModelChannels)
   const [loadingChannelId, setLoadingChannelId] = useState<string>('')
   const [expandedChannelIds, setExpandedChannelIds] = useState<string[]>([])
+  const [managingApiKeysChannelId, setManagingApiKeysChannelId] = useState<string>('')
   const [apiChannelTargets, setApiChannelTargets] = useState(() => ({
     text: getPlaygroundApiChannelTarget('text'),
     image: getPlaygroundApiChannelTarget('image'),
@@ -567,9 +574,11 @@ export default function SettingsModal() {
     video: simplifiedVideoProfile,
   }
   const selectedApiChannelTarget = apiChannelTargets.image || getPlaygroundApiChannelTarget('image')
+  const modelChannelBindings = getPlaygroundModelChannelBindings(modelChannels)
+  const findBindingByRef = (target: string) => modelChannelBindings.find((binding) => binding.target === target || binding.channel.id === target || channelApiTarget(binding.channel) === target)
   const channelTarget = (channel: PlaygroundModelChannel) => getPlaygroundModelChannelRef(channel)
   const channelApiTarget = (channel: PlaygroundModelChannel) => getPlaygroundModelChannelTarget(channel)
-  const findChannelByRef = (target: string) => modelChannels.find((channel) => channel.id === target || channelApiTarget(channel) === target)
+  const findChannelByRef = (target: string) => findBindingByRef(target)?.channel ?? modelChannels.find((channel) => channel.id === target || channelApiTarget(channel) === target)
   const getPurposeChannelTarget = (purpose: PlaygroundApiPurpose) => apiChannelTargets[purpose] || getPlaygroundApiChannelTarget(purpose)
   const getPurposeModelPickerKey = (purpose: PlaygroundApiPurpose) => `${purpose}:${getPurposeChannelTarget(purpose)}`
   const getPurposeSelectedModels = (purpose: PlaygroundApiPurpose, target = getPurposeChannelTarget(purpose)) => getSelectedModels(target, purpose)
@@ -938,14 +947,15 @@ export default function SettingsModal() {
     const nextTargets: Partial<Record<PlaygroundApiPurpose, string>> = {}
     let nextDraft = ensureSimplifiedProfiles(draft)
     let draftChanged = false
+    const bindings = getPlaygroundModelChannelBindings(channels)
 
     for (const { purpose } of MODEL_CONFIG_GROUPS) {
       const activeTarget = getPurposeChannelTarget(purpose)
       const selectedByTarget = new Map<string, string[]>()
 
-      for (const channel of channels) {
-        const target = getPlaygroundModelChannelRef(channel)
-        const available = channelModelsForPurpose(channel, purpose, channel.models)
+      for (const binding of bindings) {
+        const target = binding.target
+        const available = bindingModelsForPurpose(binding, purpose, binding.models)
         const kept = getSelectedModels(target, purpose).filter((model) => available.includes(model))
         const nextSelected = kept.length ? kept : available
         selectedByTarget.set(target, nextSelected)
@@ -962,20 +972,20 @@ export default function SettingsModal() {
         ? { target: activeTarget, model: profile.model }
         : [
             ...activeSelected.map((model) => ({ target: activeTarget, model })),
-            ...channels
-              .filter((channel) => getPlaygroundModelChannelRef(channel) !== activeTarget)
-              .flatMap((channel) => {
-                const target = getPlaygroundModelChannelRef(channel)
+            ...bindings
+              .filter((binding) => binding.target !== activeTarget)
+              .flatMap((binding) => {
+                const target = binding.target
                 return (selectedByTarget.get(target) ?? []).map((model) => ({ target, model }))
               }),
           ][0]
 
       if (!fallback?.model) continue
 
-      const channel = channels.find((item) => getPlaygroundModelChannelRef(item) === fallback.target)
+      const binding = bindings.find((item) => item.target === fallback.target)
       const storedConfig = getStoredPlaygroundPurposeConfig(fallback.target, purpose)
-      const apiKey = channel?.apiKey.trim() || storedConfig.apiKey?.trim() || getVaultTokenForPurpose(fallback.target, purpose) || profile.apiKey || ''
-      const baseUrl = channel ? getPlaygroundModelChannelTarget(channel) : resolvePlaygroundModelChannelTarget(fallback.target)
+      const apiKey = binding?.apiKey.trim() || storedConfig.apiKey?.trim() || getVaultTokenForPurpose(fallback.target, purpose) || profile.apiKey || ''
+      const baseUrl = binding ? getPlaygroundModelChannelTarget(binding.channel) : resolvePlaygroundModelChannelTarget(fallback.target)
       saveStoredPurposeConfig(fallback.target, purpose, { apiKey, model: fallback.model })
 
       if (fallback.target !== activeTarget) {
@@ -1017,11 +1027,35 @@ export default function SettingsModal() {
 
   const saveChannels = (channels: PlaygroundModelChannel[]) => {
     const normalizedChannels = channels.length ? channels : [createPlaygroundModelChannel({ name: '默认渠道' })]
-    setModelChannels(normalizedChannels)
     savePlaygroundModelChannels(normalizedChannels)
-    reconcileChannelModelStrategy(normalizedChannels)
+    const nextChannels = getPlaygroundModelChannels()
+    setModelChannels(nextChannels)
+    reconcileChannelModelStrategy(nextChannels)
     invalidateModelCatalogCache()
     setModelPickerVersion((version) => version + 1)
+  }
+
+  const normalizeUiChannelKeys = (keys: PlaygroundModelChannelKey[], fallback: PlaygroundModelChannel): PlaygroundModelChannelKey[] => {
+    const source = keys.length
+      ? keys
+      : [createPlaygroundModelChannelKey(0, { apiKey: fallback.apiKey, models: fallback.models })]
+    return source.map((key, index) => ({
+      ...key,
+      id: key.id || (index === 0 ? 'default' : newId('key')),
+      name: key.name.trim() || (index === 0 ? '默认令牌' : `令牌 ${index + 1}`),
+      models: uniqueModelOptions(key.models),
+    }))
+  }
+
+  const withChannelKeys = (channel: PlaygroundModelChannel, keys: PlaygroundModelChannelKey[]): PlaygroundModelChannel => {
+    const apiKeys = normalizeUiChannelKeys(keys, channel)
+    const primaryKey = apiKeys[0]
+    return {
+      ...channel,
+      apiKey: primaryKey?.apiKey ?? '',
+      models: primaryKey?.models ?? [],
+      apiKeys,
+    }
   }
 
   const updateChannel = (id: string, patch: Partial<PlaygroundModelChannel>) => {
@@ -1031,16 +1065,57 @@ export default function SettingsModal() {
           ...(patch.apiFormat !== undefined ? { apiFormat: patch.apiFormat } : {}),
           ...(patch.apiKey !== undefined ? { apiKey: patch.apiKey } : {}),
           ...(patch.models !== undefined ? { models: patch.models } : {}),
+          ...(patch.apiKeys !== undefined ? { apiKeys: patch.apiKeys } : {}),
         }
       : patch
     saveChannels(modelChannels.map((channel) => channel.id === id
-      ? {
-          ...channel,
-          ...safePatch,
-          models: safePatch.models ? uniqueModelOptions(safePatch.models) : channel.models,
-        }
+      ? (() => {
+          const nextKeys = safePatch.apiKeys ?? channel.apiKeys.map((key, index) => index === 0
+            ? {
+                ...key,
+                apiKey: safePatch.apiKey ?? key.apiKey,
+                models: safePatch.models ? uniqueModelOptions(safePatch.models) : key.models,
+              }
+            : key)
+          return withChannelKeys({
+            ...channel,
+            ...safePatch,
+            models: safePatch.models ? uniqueModelOptions(safePatch.models) : channel.models,
+          }, nextKeys)
+        })()
       : channel,
     ))
+  }
+
+  const updateChannelKey = (channelId: string, keyId: string, patch: Partial<PlaygroundModelChannelKey>) => {
+    saveChannels(modelChannels.map((channel) => {
+      if (channel.id !== channelId) return channel
+      return withChannelKeys(channel, channel.apiKeys.map((key) => key.id === keyId
+        ? {
+            ...key,
+            ...patch,
+            models: patch.models ? uniqueModelOptions(patch.models) : key.models,
+          }
+        : key))
+    }))
+  }
+
+  const addChannelKey = (channelId: string) => {
+    const channel = modelChannels.find((item) => item.id === channelId)
+    if (!channel) return
+    const nextKey = createPlaygroundModelChannelKey(channel.apiKeys.length, { name: `令牌 ${channel.apiKeys.length + 1}` })
+    saveChannels(modelChannels.map((item) => item.id === channelId ? withChannelKeys(item, [...item.apiKeys, nextKey]) : item))
+    setManagingApiKeysChannelId(channelId)
+  }
+
+  const deleteChannelKey = (channelId: string, keyId: string) => {
+    const channel = modelChannels.find((item) => item.id === channelId)
+    if (!channel) return
+    if (channel.apiKeys.length <= 1) {
+      showToast('至少保留一个令牌', 'info')
+      return
+    }
+    saveChannels(modelChannels.map((item) => item.id === channelId ? withChannelKeys(item, item.apiKeys.filter((key) => key.id !== keyId)) : item))
   }
 
   const isChannelExpanded = (id: string) => expandedChannelIds.includes(id)
@@ -1105,26 +1180,87 @@ export default function SettingsModal() {
     setExpandedChannelIds((ids) => ids.filter((item) => item !== id))
   }
 
+  const refreshChannelKeyModels = async (channel: PlaygroundModelChannel, key: PlaygroundModelChannelKey) => {
+    const target = getPlaygroundModelChannelKeyRef(channel, key)
+    const baseUrl = channelApiTarget(channel)
+    if (!baseUrl || !key.apiKey.trim()) {
+      showToast('请先填写该令牌的 Base URL 和 API Key', 'error')
+      return
+    }
+    setLoadingChannelId(target)
+    try {
+      const models = uniqueModelOptions(await getChannelModelList(target, true))
+      if (!models.length) {
+        showToast(`${key.name || channel.name || '令牌'} 未获取到模型，请确认 Base URL、API Key 或中转模型权限`, 'error')
+        return
+      }
+      updateChannelKey(channel.id, key.id, { models })
+      const binding = findBindingByRef(target) ?? {
+        id: target,
+        target,
+        label: channel.apiKeys.length > 1 ? `${channel.name} / ${key.name}` : channel.name,
+        channel,
+        key,
+        apiKey: key.apiKey,
+        models,
+        isPrimary: key.id === getPrimaryPlaygroundModelChannelKey(channel).id,
+      }
+      for (const { purpose } of MODEL_CONFIG_GROUPS) {
+        const purposeModels = bindingModelsForPurpose({ ...binding, models }, purpose, models)
+        reconcileFetchedPurposeModels(target, purpose, purposeModels)
+        setModelPickerState((state) => ({ ...state, [`${purpose}:${target}`]: { loading: false, models: purposeModels } }))
+      }
+      showToast(`${key.name || channel.name || '令牌'} 模型列表已更新`, 'success')
+    } catch {
+      showToast('模型读取失败', 'error')
+    } finally {
+      setLoadingChannelId('')
+    }
+  }
+
   const refreshChannelModels = async (channel: PlaygroundModelChannel) => {
-    const target = channelTarget(channel)
-    if (!target || !channel.apiKey.trim()) {
-      showToast('请先填写该渠道的 Base URL 和 API Key', 'error')
+    if (channel.apiKeys.length <= 1) {
+      await refreshChannelKeyModels(channel, getPrimaryPlaygroundModelChannelKey(channel))
+      return
+    }
+    const runnableKeys = channel.apiKeys.filter((key) => key.apiKey.trim())
+    if (!runnableKeys.length) {
+      showToast('请先填写至少一个令牌的 API Key', 'error')
       return
     }
     setLoadingChannelId(channel.id)
     try {
-      const models = uniqueModelOptions(await getChannelModelList(channel.id, true))
-      if (!models.length) {
-        showToast(`${channel.name || '渠道'} 未获取到模型，请确认 Base URL、API Key 或中转模型权限`, 'error')
-        return
-      }
-      updateChannel(channel.id, { models })
-      for (const { purpose } of MODEL_CONFIG_GROUPS) {
-        const purposeModels = channelModelsForPurpose(channel, purpose, models)
-        reconcileFetchedPurposeModels(channel.id, purpose, purposeModels)
-        setModelPickerState((state) => ({ ...state, [`${purpose}:${channel.id}`]: { loading: false, models: purposeModels } }))
-      }
-      showToast(`${channel.name || '渠道'} 模型列表已更新`, 'success')
+      const entries = await Promise.all(runnableKeys.map(async (key) => {
+        const target = getPlaygroundModelChannelKeyRef(channel, key)
+        const models = uniqueModelOptions(await getChannelModelList(target, true))
+        if (!models.length) return [key.id, null] as const
+        const binding = {
+          id: target,
+          target,
+          label: `${channel.name} / ${key.name}`,
+          channel,
+          key,
+          apiKey: key.apiKey,
+          models,
+          isPrimary: key.id === getPrimaryPlaygroundModelChannelKey(channel).id,
+        }
+        for (const { purpose } of MODEL_CONFIG_GROUPS) {
+          const purposeModels = bindingModelsForPurpose(binding, purpose, models)
+          reconcileFetchedPurposeModels(target, purpose, purposeModels)
+          setModelPickerState((state) => ({ ...state, [`${purpose}:${target}`]: { loading: false, models: purposeModels } }))
+        }
+        return [key.id, models] as const
+      }))
+      const modelMap = new Map(entries)
+      const updatedCount = entries.filter(([, models]) => Boolean(models?.length)).length
+      saveChannels(modelChannels.map((item) => {
+        if (item.id !== channel.id) return item
+        return withChannelKeys(item, item.apiKeys.map((key) => {
+          const models = modelMap.get(key.id)
+          return models?.length ? { ...key, models } : key
+        }))
+      }))
+      showToast(updatedCount ? `${channel.name || '渠道'} 已更新 ${updatedCount} 个令牌` : '未获取到模型，请确认 Base URL、API Key 或中转模型权限', updatedCount ? 'success' : 'error')
     } catch {
       showToast('模型读取失败', 'error')
     } finally {
@@ -1133,30 +1269,33 @@ export default function SettingsModal() {
   }
 
   const refreshAllChannelModels = async () => {
-    const runnable = modelChannels.filter((channel) => channel.baseUrl.trim() && channel.apiKey.trim())
+    const runnable = getPlaygroundModelChannelBindings(modelChannels).filter((binding) => channelApiTarget(binding.channel).trim() && binding.apiKey.trim())
     if (!runnable.length) {
-      showToast('请先填写至少一个渠道的 Base URL 和 API Key', 'error')
+      showToast('请先填写至少一个令牌的 Base URL 和 API Key', 'error')
       return
     }
     setLoadingChannelId('all')
     try {
-      const entries = await Promise.all(runnable.map(async (channel) => {
-        const models = uniqueModelOptions(await getChannelModelList(channel.id, true))
-        if (!models.length) return [channel.id, null] as const
+      const entries = await Promise.all(runnable.map(async (binding) => {
+        const models = uniqueModelOptions(await getChannelModelList(binding.target, true))
+        if (!models.length) return [binding.target, null] as const
         for (const { purpose } of MODEL_CONFIG_GROUPS) {
-          const purposeModels = channelModelsForPurpose(channel, purpose, models)
-          reconcileFetchedPurposeModels(channel.id, purpose, purposeModels)
-          setModelPickerState((state) => ({ ...state, [`${purpose}:${channel.id}`]: { loading: false, models: purposeModels } }))
+          const purposeModels = bindingModelsForPurpose(binding, purpose, models)
+          reconcileFetchedPurposeModels(binding.target, purpose, purposeModels)
+          setModelPickerState((state) => ({ ...state, [`${purpose}:${binding.target}`]: { loading: false, models: purposeModels } }))
         }
-        return [channel.id, models] as const
+        return [binding.target, models] as const
       }))
       const modelMap = new Map(entries)
       const updatedCount = entries.filter(([, models]) => Boolean(models?.length)).length
       saveChannels(modelChannels.map((channel) => {
-        const models = modelMap.get(channel.id)
-        return models?.length ? { ...channel, models } : channel
+        return withChannelKeys(channel, channel.apiKeys.map((key) => {
+          const target = getPlaygroundModelChannelKeyRef(channel, key)
+          const models = modelMap.get(target)
+          return models?.length ? { ...key, models } : key
+        }))
       }))
-      showToast(updatedCount ? `模型列表已更新：${updatedCount} 个渠道` : '未获取到模型，请确认 Base URL、API Key 或中转模型权限', updatedCount ? 'success' : 'error')
+      showToast(updatedCount ? `模型列表已更新：${updatedCount} 个令牌` : '未获取到模型，请确认 Base URL、API Key 或中转模型权限', updatedCount ? 'success' : 'error')
     } catch {
       showToast('模型读取失败', 'error')
     } finally {
@@ -1215,14 +1354,14 @@ export default function SettingsModal() {
   }
 
   const purposeModelEntries = (purpose: PlaygroundApiPurpose, currentModel = '') => {
-    const entries = modelChannels.flatMap((channel) => {
-      const target = channelTarget(channel)
+    const entries = modelChannelBindings.flatMap((binding) => {
+      const target = binding.target
       const pickerModels = modelPickerState[`${purpose}:${target}`]?.models ?? []
-      return channelModelsForPurpose(channel, purpose, [...channel.models, ...pickerModels])
+      return bindingModelsForPurpose(binding, purpose, [...binding.models, ...pickerModels])
         .map((model) => ({
           target,
           model,
-          label: `${model}（${channel.name || '未命名渠道'}）`,
+          label: `${model}（${binding.label || '未命名令牌'}）`,
         }))
     })
     if (currentModel && isModelAllowedForPurpose(getPurposeChannelTarget(purpose), currentModel, purpose) && !entries.some((entry) => entry.target === getPurposeChannelTarget(purpose) && entry.model === currentModel)) {
@@ -1236,8 +1375,8 @@ export default function SettingsModal() {
   }
 
   const isModelAllowedForPurpose = (target: string, model: string, purpose: PlaygroundApiPurpose) => {
-    const channel = findChannelByRef(target)
-    return isModelForPurposeWithHint(model, purpose, channel ? channelPurposeHint(channel) : null)
+    const binding = findBindingByRef(target)
+    return isModelForPurposeWithHint(model, purpose, binding ? bindingPurposeHint(binding) : null)
   }
 
   const modelOptionValue = (target: string, model: string) => `${target}${MODEL_OPTION_SEPARATOR}${model}`
@@ -1259,8 +1398,8 @@ export default function SettingsModal() {
 
   const selectedPurposeModelValues = (purpose: PlaygroundApiPurpose) => {
     const available = new Set(purposeModelEntries(purpose).map((entry) => modelOptionValue(entry.target, entry.model)))
-    return Array.from(new Set(modelChannels.flatMap((channel) => {
-      const target = channelTarget(channel)
+    return Array.from(new Set(modelChannelBindings.flatMap((binding) => {
+      const target = binding.target
       return getSelectedModels(target, purpose).map((model) => modelOptionValue(target, model))
     }))).filter((value) => available.has(value))
   }
@@ -1273,8 +1412,8 @@ export default function SettingsModal() {
       if (!target || !model || !isModelAllowedForPurpose(target, model, purpose)) return
       grouped.set(target, uniqueModelOptions([...(grouped.get(target) ?? []), model]))
     })
-    modelChannels.forEach((channel) => {
-      const target = channelTarget(channel)
+    modelChannelBindings.forEach((binding) => {
+      const target = binding.target
       setSelectedModels(target, purpose, grouped.get(target) ?? [])
     })
     const profile = profileByPurpose[purpose]
@@ -1296,9 +1435,9 @@ export default function SettingsModal() {
       showToast('该模型不属于当前用途', 'error')
       return
     }
-    const channel = findChannelByRef(target)
+    const binding = findBindingByRef(target)
     const storedConfig = getStoredPlaygroundPurposeConfig(target, purpose)
-    const apiKey = channel?.apiKey.trim() || storedConfig.apiKey?.trim() || getVaultTokenForPurpose(target, purpose) || profile.apiKey || ''
+    const apiKey = binding?.apiKey.trim() || storedConfig.apiKey?.trim() || getVaultTokenForPurpose(target, purpose) || profile.apiKey || ''
     setPlaygroundApiChannelTarget(target, purpose)
     setApiChannelTargets((targets) => ({ ...targets, [purpose]: target }))
     saveStoredPurposeConfig(target, purpose, {
@@ -1327,6 +1466,10 @@ export default function SettingsModal() {
   }
 
   const handleClose = () => {
+    if (managingApiKeysChannelId) {
+      setManagingApiKeysChannelId('')
+      return
+    }
     if (showZipDownloadRouteManager) {
       setShowZipDownloadRouteManager(false)
       return
@@ -1398,7 +1541,7 @@ export default function SettingsModal() {
   }
 
   useCloseOnEscape(showSettings, handleClose)
-  usePreventBackgroundScroll(showSettings || showTokenVault, showZipDownloadRouteManager ? zipDownloadRouteScrollBoundaryRef : showCustomProviderImport ? customProviderScrollBoundaryRef : settingsScrollBoundaryRef)
+  usePreventBackgroundScroll(showSettings || showTokenVault || Boolean(managingApiKeysChannelId), showZipDownloadRouteManager ? zipDownloadRouteScrollBoundaryRef : showCustomProviderImport ? customProviderScrollBoundaryRef : settingsScrollBoundaryRef)
 
   if (!showSettings) return null
 
@@ -1823,7 +1966,7 @@ export default function SettingsModal() {
       />
       <div
         ref={settingsScrollBoundaryRef}
-        className="relative z-10 w-full max-w-[1120px] rounded-3xl border border-white/50 bg-white/95 shadow-2xl ring-1 ring-black/5 animate-modal-in dark:border-white/[0.08] dark:bg-gray-900/95 dark:ring-white/10 flex h-[94vh] sm:h-[820px] flex-col overflow-hidden"
+        className="relative z-10 w-full max-w-[1320px] rounded-3xl border border-white/50 bg-white/95 shadow-2xl ring-1 ring-black/5 animate-modal-in dark:border-white/[0.08] dark:bg-gray-900/95 dark:ring-white/10 flex h-[94vh] sm:h-[860px] flex-col overflow-hidden"
       >
         {/* Header */}
         <div className="flex items-center justify-between shrink-0 p-5 border-b border-gray-100 dark:border-white/[0.08]">
@@ -1987,11 +2130,15 @@ export default function SettingsModal() {
 
                     <div className="space-y-3">
                       {modelChannels.map((channel) => {
-                        const target = channelTarget(channel)
                         const expanded = isChannelExpanded(channel.id)
                         const protectedChannel = isProtectedPlaygroundModelChannel(channel)
                         const channelDisplayBaseUrl = getProtectedPlaygroundModelChannelBaseUrl(channel) ?? channel.baseUrl
                         const channelUrl = channelDisplayBaseUrl.trim() || channelApiTarget(channel)
+                        const keys = channel.apiKeys.length ? channel.apiKeys : [getPrimaryPlaygroundModelChannelKey(channel)]
+                        const primaryKey = keys[0]
+                        const singleKey = keys.length <= 1
+                        const modelCount = uniqueModelOptions(keys.flatMap((key) => key.models)).length
+                        const channelLoading = loadingChannelId === channel.id || keys.some((key) => loadingChannelId === getPlaygroundModelChannelKeyRef(channel, key))
                         return (
                           <section key={channel.id} className="rounded-2xl border border-gray-200/70 bg-white/85 p-4 shadow-sm dark:border-white/[0.08] dark:bg-white/[0.03]">
                             <div className={`${expanded ? 'mb-4' : ''} flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between`}>
@@ -2006,22 +2153,25 @@ export default function SettingsModal() {
                                   <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-semibold text-gray-500 dark:bg-white/[0.08] dark:text-gray-300">
                                     {channel.apiFormat === 'gemini' ? 'Gemini' : 'OpenAI'}
                                   </span>
+                                  <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-semibold text-gray-500 dark:bg-white/[0.08] dark:text-gray-300">
+                                    {keys.length} 个令牌
+                                  </span>
                                   <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-600 dark:bg-blue-500/10 dark:text-blue-300">
-                                    {channel.models.length} 个模型
+                                    {modelCount} 个模型
                                   </span>
                                 </div>
-                                <div className="mt-1 min-w-0 truncate text-xs text-gray-500 dark:text-gray-400" title={channelUrl || target}>
-                                  {channelUrl || target || '未填写站点'}
+                                <div className="mt-1 min-w-0 truncate text-xs text-gray-500 dark:text-gray-400" title={channelUrl}>
+                                  {channelUrl || '未填写站点'}
                                 </div>
                               </div>
                               <div className="flex shrink-0 flex-wrap gap-2">
                                 <button
                                   type="button"
                                   onClick={() => void refreshChannelModels(channel)}
-                                  disabled={loadingChannelId === channel.id}
+                                  disabled={channelLoading || loadingChannelId === 'all'}
                                   className="rounded-lg border border-gray-200/80 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 transition hover:bg-gray-100 disabled:cursor-wait disabled:opacity-60 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200 dark:hover:bg-white/[0.08]"
                                 >
-                                  {loadingChannelId === channel.id ? '拉取中…' : '拉取模型'}
+                                  {channelLoading ? '拉取中…' : singleKey ? '拉取模型' : '拉取全部'}
                                 </button>
                                 <button
                                   type="button"
@@ -2077,34 +2227,98 @@ export default function SettingsModal() {
                               </label>
                               <label className="block">
                                 <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">API Key</span>
-                                <div className="relative">
-                                  <input
-                                    value={channel.apiKey}
-                                    onChange={(event) => updateChannel(channel.id, { apiKey: event.target.value })}
-                                    type={showApiKey ? 'text' : 'password'}
-                                    placeholder="sk-..."
-                                    className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 pr-14 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
-                                  />
-                                  <button
-                                    type="button"
-                                    onClick={() => setShowApiKey((value) => !value)}
-                                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg px-2 py-1 text-xs text-gray-500 transition hover:bg-gray-100 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-white/[0.08] dark:hover:text-gray-100"
-                                  >
-                                    {showApiKey ? '隐藏' : '显示'}
-                                  </button>
-                                </div>
+                                {singleKey ? (
+                                  <div className="flex gap-2">
+                                    <div className="relative min-w-0 flex-1">
+                                      <input
+                                        value={primaryKey.apiKey}
+                                        onChange={(event) => updateChannelKey(channel.id, primaryKey.id, { apiKey: event.target.value })}
+                                        type={showApiKey ? 'text' : 'password'}
+                                        placeholder="sk-..."
+                                        className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 pr-14 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => setShowApiKey((value) => !value)}
+                                        className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg px-2 py-1 text-xs text-gray-500 transition hover:bg-gray-100 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-white/[0.08] dark:hover:text-gray-100"
+                                      >
+                                        {showApiKey ? '隐藏' : '显示'}
+                                      </button>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => addChannelKey(channel.id)}
+                                      className="inline-flex shrink-0 items-center gap-1 rounded-xl border border-gray-200/80 bg-white px-3 py-2 text-xs font-semibold text-gray-600 transition hover:bg-gray-100 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200 dark:hover:bg-white/[0.08]"
+                                    >
+                                      <PlusIcon className="h-3.5 w-3.5" />
+                                      新增
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="flex flex-wrap items-center gap-2 rounded-xl border border-gray-200/70 bg-white/50 p-2 dark:border-white/[0.08] dark:bg-white/[0.03]">
+                                    {keys.map((key) => (
+                                      <button
+                                        key={key.id}
+                                        type="button"
+                                        onClick={() => setManagingApiKeysChannelId(channel.id)}
+                                        className="min-w-0 rounded-lg border border-gray-200/70 bg-white px-2.5 py-1.5 text-left text-xs transition hover:border-blue-200 hover:bg-blue-50 dark:border-white/[0.08] dark:bg-black/20 dark:hover:border-blue-400/30 dark:hover:bg-blue-500/10"
+                                      >
+                                        <span className="block max-w-[180px] truncate font-semibold text-gray-700 dark:text-gray-100">{key.name}</span>
+                                        <span className="mt-0.5 block max-w-[180px] truncate font-mono text-[11px] text-gray-400">{maskToken(key.apiKey) || '未填写'}</span>
+                                      </button>
+                                    ))}
+                                    <button
+                                      type="button"
+                                      onClick={() => setManagingApiKeysChannelId(channel.id)}
+                                      className="ml-auto inline-flex items-center gap-1 rounded-lg border border-gray-200/80 bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-600 transition hover:bg-gray-100 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200 dark:hover:bg-white/[0.08]"
+                                    >
+                                      管理令牌
+                                    </button>
+                                  </div>
+                                )}
                               </label>
                               <div className="md:col-span-2">
                                 <div className="mb-1.5 flex items-center justify-between gap-2">
                                   <span className="block text-sm text-gray-600 dark:text-gray-300">模型列表</span>
                                   <span className="truncate text-[11px] text-gray-400" title={channelUrl}>{channelUrl}</span>
                                 </div>
-                                <ModelMultiSelect
-                                  value={channel.models}
-                                  onChange={(models) => updateChannel(channel.id, { models })}
-                                  placeholder="输入模型名，或点击拉取模型"
-                                  className="w-full"
-                                />
+                                {singleKey ? (
+                                  <ModelMultiSelect
+                                    value={primaryKey.models}
+                                    onChange={(models) => updateChannelKey(channel.id, primaryKey.id, { models })}
+                                    placeholder="输入模型名，或点击拉取模型"
+                                    className="w-full"
+                                  />
+                                ) : (
+                                  <div className="grid gap-2 md:grid-cols-2">
+                                    {keys.map((key) => {
+                                      const previewModels = key.models.slice(0, 3)
+                                      return (
+                                        <button
+                                          key={key.id}
+                                          type="button"
+                                          onClick={() => setManagingApiKeysChannelId(channel.id)}
+                                          className="min-w-0 rounded-xl border border-gray-200/70 bg-white/55 px-3 py-2.5 text-left transition hover:border-blue-200 hover:bg-blue-50 dark:border-white/[0.08] dark:bg-white/[0.03] dark:hover:border-blue-400/30 dark:hover:bg-blue-500/10"
+                                        >
+                                          <div className="flex items-center justify-between gap-2">
+                                            <span className="truncate text-xs font-bold text-gray-700 dark:text-gray-100">{key.name}</span>
+                                            <span className="shrink-0 rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-600 dark:bg-blue-500/10 dark:text-blue-300">{key.models.length} 个</span>
+                                          </div>
+                                          <div className="mt-2 flex min-h-[22px] flex-wrap gap-1">
+                                            {previewModels.length ? previewModels.map((model) => (
+                                              <span key={model} className="max-w-[160px] truncate rounded-md bg-gray-100 px-1.5 py-1 text-[10px] font-semibold text-gray-500 dark:bg-white/[0.08] dark:text-gray-300">{model}</span>
+                                            )) : (
+                                              <span className="text-[11px] text-gray-400">未拉取模型</span>
+                                            )}
+                                            {key.models.length > previewModels.length && (
+                                              <span className="rounded-md bg-gray-100 px-1.5 py-1 text-[10px] font-semibold text-gray-500 dark:bg-white/[0.08] dark:text-gray-300">+{key.models.length - previewModels.length}</span>
+                                            )}
+                                          </div>
+                                        </button>
+                                      )
+                                    })}
+                                  </div>
+                                )}
                               </div>
                             </div>
                             )}
@@ -2185,7 +2399,7 @@ export default function SettingsModal() {
                                 value={selectedValues}
                                 options={allOptions}
                                 display="summary"
-                                placeholder={modelChannels.some((channel) => channel.models.length) ? `选择${group.label}模型` : '先到渠道里填写或拉取模型'}
+                                placeholder={modelChannelBindings.some((binding) => binding.models.length) ? `选择${group.label}模型` : '先到渠道里填写或拉取模型'}
                                 onChange={(values) => updatePurposeSelectedModelValues(group.purpose, values)}
                               />
                             </div>
@@ -2888,6 +3102,133 @@ export default function SettingsModal() {
         </div>
       </div>
       </div>
+
+        {managingApiKeysChannelId && (() => {
+          const channel = modelChannels.find((item) => item.id === managingApiKeysChannelId)
+          if (!channel) return null
+          const keys = channel.apiKeys.length ? channel.apiKeys : [getPrimaryPlaygroundModelChannelKey(channel)]
+          const channelDisplayBaseUrl = getProtectedPlaygroundModelChannelBaseUrl(channel) ?? channel.baseUrl
+          const channelUrl = channelDisplayBaseUrl.trim() || channelApiTarget(channel)
+          return createPortal(
+            <div
+              data-no-drag-select
+              className="fixed inset-0 z-[125] flex items-center justify-center p-4"
+              onClick={() => setManagingApiKeysChannelId('')}
+            >
+              <div className="absolute inset-0 bg-black/30 backdrop-blur-md animate-overlay-in" />
+              <div
+                className="relative z-10 flex max-h-[88vh] w-full max-w-5xl flex-col rounded-3xl border border-white/50 bg-white/95 shadow-[0_8px_40px_rgb(0,0,0,0.18)] ring-1 ring-black/5 animate-confirm-in dark:border-white/[0.08] dark:bg-gray-900/95 dark:ring-white/10"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex shrink-0 items-start justify-between gap-4 border-b border-gray-100 px-6 py-5 dark:border-white/[0.08]">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="truncate text-base font-bold text-gray-900 dark:text-gray-50">{channel.name || '未命名渠道'} · API 令牌</h3>
+                      <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-semibold text-gray-500 dark:bg-white/[0.08] dark:text-gray-300">
+                        {keys.length} 个令牌
+                      </span>
+                    </div>
+                    <p className="mt-1 truncate text-sm text-gray-500 dark:text-gray-400" title={channelUrl}>
+                      {channelUrl}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => addChannelKey(channel.id)}
+                      className="inline-flex items-center gap-2 rounded-xl bg-gray-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-black dark:bg-white dark:text-black dark:hover:bg-gray-200"
+                    >
+                      <PlusIcon className="h-3.5 w-3.5" />
+                      新增令牌
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setManagingApiKeysChannelId('')}
+                      className="rounded-full p-1.5 text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-white/[0.08] dark:hover:text-gray-100"
+                      aria-label="关闭"
+                    >
+                      <CloseIcon className="h-5 w-5" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-6 py-5 custom-scrollbar">
+                  {keys.map((key, index) => {
+                    const tokenTarget = getPlaygroundModelChannelKeyRef(channel, key)
+                    const tokenLoading = loadingChannelId === tokenTarget
+                    return (
+                      <section key={key.id} className="rounded-2xl border border-gray-200/70 bg-gray-50/70 p-4 dark:border-white/[0.08] dark:bg-white/[0.03]">
+                        <div className="grid gap-3 lg:grid-cols-[180px_minmax(260px,1fr)_auto] lg:items-end">
+                          <label className="block">
+                            <span className="mb-1.5 block text-xs font-semibold text-gray-500 dark:text-gray-400">令牌名称</span>
+                            <input
+                              value={key.name}
+                              onChange={(event) => updateChannelKey(channel.id, key.id, { name: event.target.value })}
+                              placeholder={index === 0 ? '默认令牌' : `令牌 ${index + 1}`}
+                              className="w-full rounded-xl border border-gray-200/70 bg-white px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-black/20 dark:text-gray-200 dark:focus:border-blue-500/50"
+                            />
+                          </label>
+                          <label className="block">
+                            <span className="mb-1.5 block text-xs font-semibold text-gray-500 dark:text-gray-400">API Key</span>
+                            <div className="relative">
+                              <input
+                                value={key.apiKey}
+                                onChange={(event) => updateChannelKey(channel.id, key.id, { apiKey: event.target.value })}
+                                type={showApiKey ? 'text' : 'password'}
+                                placeholder="sk-..."
+                                className="w-full rounded-xl border border-gray-200/70 bg-white px-3 py-2.5 pr-14 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-black/20 dark:text-gray-200 dark:focus:border-blue-500/50"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setShowApiKey((value) => !value)}
+                                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg px-2 py-1 text-xs text-gray-500 transition hover:bg-gray-100 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-white/[0.08] dark:hover:text-gray-100"
+                              >
+                                {showApiKey ? '隐藏' : '显示'}
+                              </button>
+                            </div>
+                          </label>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => void refreshChannelKeyModels(channel, key)}
+                              disabled={tokenLoading || loadingChannelId === 'all'}
+                              className="inline-flex h-[42px] items-center gap-2 rounded-xl border border-gray-200/80 bg-white px-3 text-xs font-semibold text-gray-700 transition hover:bg-gray-100 disabled:cursor-wait disabled:opacity-60 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200 dark:hover:bg-white/[0.08]"
+                            >
+                              <RefreshIcon className={`h-3.5 w-3.5 ${tokenLoading ? 'animate-spin' : ''}`} />
+                              拉取
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => deleteChannelKey(channel.id, key.id)}
+                              disabled={keys.length <= 1}
+                              className="h-[42px] rounded-xl border border-red-200/80 bg-white px-3 text-red-500 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:border-gray-200/80 disabled:text-gray-300 disabled:hover:bg-white dark:border-red-500/30 dark:bg-white/[0.04] dark:text-red-300 dark:hover:bg-red-500/10 dark:disabled:border-white/[0.08] dark:disabled:text-gray-600 dark:disabled:hover:bg-white/[0.04]"
+                              aria-label="删除令牌"
+                            >
+                              <TrashIcon className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                        <div className="mt-3">
+                          <div className="mb-1.5 flex items-center justify-between gap-2">
+                            <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">模型列表</span>
+                            <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-gray-500 dark:bg-white/[0.08] dark:text-gray-300">{key.models.length} 个模型</span>
+                          </div>
+                          <ModelMultiSelect
+                            value={key.models}
+                            onChange={(models) => updateChannelKey(channel.id, key.id, { models })}
+                            placeholder="输入模型名，或点击拉取"
+                            className="w-full"
+                          />
+                        </div>
+                      </section>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        })()}
 
         {showTokenVault && createPortal(
           <div

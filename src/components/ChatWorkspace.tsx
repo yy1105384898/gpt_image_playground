@@ -6,7 +6,7 @@ import { getPlaygroundApiChannelTarget, getPlaygroundApiResolvedTarget, setPlayg
 import { getModelGroups } from '../lib/modelCatalog'
 import { getStoredPlaygroundPurposeConfig, savePlaygroundPurposeConfig } from '../lib/playgroundPurposeConfig'
 import { normalizeSettings } from '../lib/apiProfiles'
-import { findPlaygroundModelChannelByTarget, resolvePlaygroundModelChannelTarget } from '../lib/playgroundChannels'
+import { getPlaygroundModelChannelApiKey, resolvePlaygroundModelChannelTarget } from '../lib/playgroundChannels'
 import ModelSelect from './ModelSelect'
 import MarkdownRenderer from './MarkdownRenderer'
 import Select from './Select'
@@ -203,9 +203,9 @@ export default function ChatWorkspace() {
               target={activeTarget}
               fallbackModels={[DEFAULT_CHAT_MODEL, 'gpt-4.1-mini', 'gpt-4o-mini']}
               onSelect={(target, nextModel) => {
-                const channelApiKey = findPlaygroundModelChannelByTarget(target)?.apiKey
+                const channelApiKey = getPlaygroundModelChannelApiKey(target)
                 const storedApiKey = getStoredPlaygroundPurposeConfig(target, 'text').apiKey
-                const apiKey = channelApiKey?.trim() || storedApiKey?.trim() || getTextProfile()?.apiKey || ''
+                const apiKey = channelApiKey || storedApiKey?.trim() || getTextProfile()?.apiKey || ''
                 if (target) setPlaygroundApiChannelTarget(target, 'text')
                 if (target) savePlaygroundPurposeConfig(target, 'text', { apiKey, model: nextModel })
                 if (target) {

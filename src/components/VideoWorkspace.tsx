@@ -4,7 +4,7 @@ import { useVideoStore, type VideoTask } from '../videoStore'
 import { createVideo, fetchVideoContentObjectUrl, pollVideo, VIDEO_DURATIONS, VIDEO_ASPECTS, VIDEO_SIZES, type VideoMode } from '../lib/videoApi'
 import { getPlaygroundApiChannelTarget, setPlaygroundApiChannelTarget } from '../lib/devProxy'
 import { getStoredPlaygroundPurposeConfig, savePlaygroundPurposeConfig } from '../lib/playgroundPurposeConfig'
-import { findPlaygroundModelChannelByTarget, resolvePlaygroundModelChannelTarget } from '../lib/playgroundChannels'
+import { getPlaygroundModelChannelApiKey, resolvePlaygroundModelChannelTarget } from '../lib/playgroundChannels'
 import { fileToDataUrl } from '../lib/dataUrl'
 import { getAtImageQuery, getImageMentionLabel, getPromptMentionParts, getSelectedImageMentionLabel, insertImageMentionAtVisibleRange, replaceImageMentionsForApi, stripImageMentionMarkers } from '../lib/promptImageMentions'
 import { copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
@@ -1056,10 +1056,10 @@ export default function VideoWorkspace() {
                 value={params.model}
                 target={getPlaygroundApiChannelTarget('video')}
                 onSelect={(target, model) => {
-                  const channelApiKey = findPlaygroundModelChannelByTarget(target)?.apiKey
+                  const channelApiKey = getPlaygroundModelChannelApiKey(target)
                   const videoProfile = useStore.getState().settings.profiles.find((profile) => profile.id === 'yy-video-profile')
                   const storedApiKey = getStoredPlaygroundPurposeConfig(target, 'video').apiKey
-                  const apiKey = channelApiKey?.trim() || storedApiKey?.trim() || videoProfile?.apiKey || ''
+                  const apiKey = channelApiKey || storedApiKey?.trim() || videoProfile?.apiKey || ''
                   setPlaygroundApiChannelTarget(target, 'video')
                   savePlaygroundPurposeConfig(target, 'video', { apiKey, model })
                   useStore.getState().setSettings({

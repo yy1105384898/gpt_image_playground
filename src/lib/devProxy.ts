@@ -6,6 +6,7 @@ import {
   getPlaygroundModelChannelRef,
   getPlaygroundModelChannelTarget,
   getPlaygroundModelChannels,
+  normalizePlaygroundModelChannelTargetRef,
   normalizePlaygroundBaseUrl,
   resolvePlaygroundModelChannelTarget,
 } from './playgroundChannels'
@@ -37,7 +38,7 @@ function normalizeApiChannelTarget(target: string | null): string {
   const requested = String(target || '').trim()
   if (!requested) return getDefaultPlaygroundModelChannelTarget()
   const channel = findPlaygroundModelChannelByTarget(requested)
-  if (channel) return getPlaygroundModelChannelRef(channel)
+  if (channel) return normalizePlaygroundModelChannelTargetRef(requested)
   return normalizePlaygroundBaseUrl(requested) || getDefaultPlaygroundModelChannelTarget()
 }
 
