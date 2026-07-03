@@ -33,6 +33,7 @@ import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { DEFAULT_DROPDOWN_MAX_HEIGHT, getDropdownMaxHeight } from '../lib/dropdown'
 import { getChannelModelList, getChannelModels, getDefaultSelectedModels, getSelectedModels, inferPurposeFromLabel, invalidateModelCatalogCache, isModelForPurpose, isModelForPurposeWithHint, setSelectedModels } from '../lib/modelCatalog'
+import { uniqueModelIds } from '../lib/modelIds'
 import { getStoredPlaygroundPurposeConfig, savePlaygroundPurposeConfig } from '../lib/playgroundPurposeConfig'
 import {
   createPlaygroundModelChannel,
@@ -275,7 +276,7 @@ function baseDraftProfileModel(draft: AppSettings, profileId: string) {
 }
 
 function uniqueModelOptions(models: string[]) {
-  return Array.from(new Set(models.map((model) => model.trim()).filter(Boolean)))
+  return uniqueModelIds(models)
 }
 
 function channelPurposeHint(channel: PlaygroundModelChannel): PlaygroundApiPurpose | null {
@@ -933,10 +934,92 @@ export default function SettingsModal() {
     commitSettings(nextDraft)
   }
 
+  const reconcileChannelModelStrategy = (channels: PlaygroundModelChannel[]) => {
+    const nextTargets: Partial<Record<PlaygroundApiPurpose, string>> = {}
+    let nextDraft = ensureSimplifiedProfiles(draft)
+    let draftChanged = false
+
+    for (const { purpose } of MODEL_CONFIG_GROUPS) {
+      const activeTarget = getPurposeChannelTarget(purpose)
+      const selectedByTarget = new Map<string, string[]>()
+
+      for (const channel of channels) {
+        const target = getPlaygroundModelChannelRef(channel)
+        const available = channelModelsForPurpose(channel, purpose, channel.models)
+        const kept = getSelectedModels(target, purpose).filter((model) => available.includes(model))
+        const nextSelected = kept.length ? kept : available
+        selectedByTarget.set(target, nextSelected)
+        setSelectedModels(target, purpose, nextSelected)
+      }
+
+      const profileId = SIMPLIFIED_PROFILE_IDS_BY_PURPOSE[purpose]
+      const profile = nextDraft.profiles.find((item) => item.id === profileId)
+      if (!profile) continue
+
+      const activeSelected = selectedByTarget.get(activeTarget) ?? []
+      const currentModelValid = Boolean(profile.model && activeSelected.includes(profile.model))
+      const fallback = currentModelValid
+        ? { target: activeTarget, model: profile.model }
+        : [
+            ...activeSelected.map((model) => ({ target: activeTarget, model })),
+            ...channels
+              .filter((channel) => getPlaygroundModelChannelRef(channel) !== activeTarget)
+              .flatMap((channel) => {
+                const target = getPlaygroundModelChannelRef(channel)
+                return (selectedByTarget.get(target) ?? []).map((model) => ({ target, model }))
+              }),
+          ][0]
+
+      if (!fallback?.model) continue
+
+      const channel = channels.find((item) => getPlaygroundModelChannelRef(item) === fallback.target)
+      const storedConfig = getStoredPlaygroundPurposeConfig(fallback.target, purpose)
+      const apiKey = channel?.apiKey.trim() || storedConfig.apiKey?.trim() || getVaultTokenForPurpose(fallback.target, purpose) || profile.apiKey || ''
+      const baseUrl = channel ? getPlaygroundModelChannelTarget(channel) : resolvePlaygroundModelChannelTarget(fallback.target)
+      saveStoredPurposeConfig(fallback.target, purpose, { apiKey, model: fallback.model })
+
+      if (fallback.target !== activeTarget) {
+        setPlaygroundApiChannelTarget(fallback.target, purpose)
+        nextTargets[purpose] = fallback.target
+      }
+
+      if (profile.model === fallback.model && profile.baseUrl === baseUrl && profile.apiKey === apiKey) continue
+
+      nextDraft = normalizeSettings({
+        ...nextDraft,
+        profiles: nextDraft.profiles.map((item) => item.id === profileId
+          ? {
+              ...item,
+              provider: 'openai',
+              baseUrl,
+              apiKey,
+              model: fallback.model,
+              apiProxy: true,
+              responseFormatB64Json: purpose === 'image' ? true : item.responseFormatB64Json,
+            }
+          : item),
+        activeProfileId: SIMPLIFIED_IMAGE_PROFILE_ID,
+        agentApiConfigMode: 'hybrid',
+        agentTextProfileId: SIMPLIFIED_TEXT_PROFILE_ID,
+        agentImageProfileId: SIMPLIFIED_IMAGE_PROFILE_ID,
+      })
+      draftChanged = true
+    }
+
+    if (Object.keys(nextTargets).length) {
+      setApiChannelTargets((targets) => ({ ...targets, ...nextTargets }))
+    }
+    if (draftChanged) {
+      setDraft(nextDraft)
+      commitSettings(nextDraft)
+    }
+  }
+
   const saveChannels = (channels: PlaygroundModelChannel[]) => {
     const normalizedChannels = channels.length ? channels : [createPlaygroundModelChannel({ name: '默认渠道' })]
     setModelChannels(normalizedChannels)
     savePlaygroundModelChannels(normalizedChannels)
+    reconcileChannelModelStrategy(normalizedChannels)
     invalidateModelCatalogCache()
     setModelPickerVersion((version) => version + 1)
   }

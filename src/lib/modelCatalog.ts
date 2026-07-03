@@ -20,6 +20,7 @@ import {
 import { getStoredPlaygroundPurposeConfig } from './playgroundPurposeConfig'
 import { getTokenVaultItems } from './tokenVault'
 import { inferPurposeFromLabel, isModelForPurpose, isModelForPurposeWithHint } from './modelPurpose'
+import { normalizeModelIdCandidate, uniqueModelIds } from './modelIds'
 
 export { inferPurposeFromLabel, isModelForPurpose, isModelForPurposeWithHint } from './modelPurpose'
 
@@ -75,47 +76,6 @@ const NON_MODEL_OBJECT_KEYS = new Set([
   'limit',
 ])
 const MODEL_KEY_HINT_RE = /gpt|claude|gemini|deepseek|qwen|kimi|glm|llama|mistral|grok|doubao|hunyuan|ernie|nova|command|sora|veo|kling|可灵|video|seedance|runway|pika|hailuo|海螺|vidu|wan|t2v|i2v|flux|dall|image|img|imagen|seedream|stable|midjourney|mj|recraft|ideogram|jimeng|即梦|cogview|cogvideo|tts|whisper|embedding|rerank|[-_/.:]\d/i
-const NON_MODEL_ID_KEYS = new Set([
-  'openai',
-  'openai_chat',
-  'openai_edit',
-  'openai_edits',
-  'openai_generation',
-  'openai_generations',
-  'openai_image',
-  'openai_images',
-  'gemini',
-  'google',
-  'anthropic',
-  'azure',
-  'fal',
-  'replicate',
-  'chat',
-  'chats',
-  'text',
-  'texts',
-  'image',
-  'images',
-  'video',
-  'videos',
-  'edit',
-  'edits',
-  'generation',
-  'generations',
-  'completion',
-  'completions',
-  'response',
-  'responses',
-])
-
-function normalizeModelIdCandidate(value: string): string {
-  const trimmed = value.trim()
-  if (!trimmed) return ''
-  const key = trimmed.toLowerCase().replace(/[\s-]+/g, '_')
-  if (NON_MODEL_ID_KEYS.has(key)) return ''
-  return trimmed
-}
-
 function modelIdFromObjectKey(key: string, value: unknown): string {
   const trimmed = key.trim()
   const normalized = trimmed.toLowerCase()
@@ -177,7 +137,7 @@ function readStoredChannelModels(key: string): string[] | null {
     const parsed = JSON.parse(window.localStorage.getItem(CHANNEL_MODELS_STORAGE_KEY) || '{}') as Record<string, StoredChannelModelCache>
     const item = parsed?.[key]
     if (!item || Date.now() - item.updatedAt > CHANNEL_MODELS_CACHE_TTL_MS) return null
-    return Array.isArray(item.models) ? item.models.filter(Boolean) : null
+    return Array.isArray(item.models) ? uniqueModelIds(item.models) : null
   } catch {
     return null
   }
@@ -187,7 +147,7 @@ function writeStoredChannelModels(key: string, models: string[]) {
   if (typeof window === 'undefined') return
   try {
     const parsed = JSON.parse(window.localStorage.getItem(CHANNEL_MODELS_STORAGE_KEY) || '{}') as Record<string, StoredChannelModelCache>
-    parsed[key] = { updatedAt: Date.now(), models }
+    parsed[key] = { updatedAt: Date.now(), models: uniqueModelIds(models) }
     window.localStorage.setItem(CHANNEL_MODELS_STORAGE_KEY, JSON.stringify(parsed))
   } catch {
     // localStorage 满或禁用时保留内存缓存即可。
@@ -205,7 +165,7 @@ function readSelectedModelsState(): SelectedModelsState {
 }
 
 export function getSelectedModels(target: string, purpose: PlaygroundApiPurpose): string[] {
-  return readSelectedModelsState()[target]?.[purpose]?.filter(Boolean) ?? []
+  return uniqueModelIds(readSelectedModelsState()[target]?.[purpose] ?? [])
 }
 
 export function hasSelectedModelsConfig(target: string, purpose: PlaygroundApiPurpose): boolean {
@@ -217,14 +177,14 @@ export function setSelectedModels(target: string, purpose: PlaygroundApiPurpose,
   const state = readSelectedModelsState()
   state[target] = {
     ...(state[target] ?? {}),
-    [purpose]: Array.from(new Set(models.filter(Boolean))),
+    [purpose]: uniqueModelIds(models),
   }
   window.localStorage.setItem(SELECTED_MODELS_STORAGE_KEY, JSON.stringify(state))
   invalidateModelCatalogCache(purpose)
 }
 
 export function getDefaultSelectedModels(models: string[], purpose: PlaygroundApiPurpose): string[] {
-  return Array.from(new Set(models.filter(Boolean)))
+  return uniqueModelIds(models)
 }
 
 function authHeader(apiKey: string): string {
@@ -313,7 +273,7 @@ async function fetchChannelModels(target: string): Promise<string[]> {
         const json = await resp.json()
         const list = json?.models
         if (Array.isArray(list)) {
-          return Array.from(new Set(list.filter((item): item is string => typeof item === 'string' && item.trim().length > 0).map((item) => item.trim())))
+          return uniqueModelIds(list)
         }
       }
     } catch {

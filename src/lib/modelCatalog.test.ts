@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PLAYGROUND_MODEL_CHANNELS_STORAGE_KEY } from './playgroundChannels'
-import { extractModelIds, getChannelModels } from './modelCatalog'
+import { extractModelIds, getChannelModels, getSelectedModels, setSelectedModels } from './modelCatalog'
 
 function stubLocalStorage(initial: Record<string, string> = {}) {
   const store = new Map(Object.entries(initial))
@@ -89,5 +89,13 @@ describe('model catalog', () => {
       'X-YY-API-Target': 'https://yynewapi.yangyangnj.top/v1',
     })
     expect(init.headers).not.toHaveProperty('X-YY-API-Purpose')
+  })
+
+  it('sanitizes stale selected model settings', () => {
+    stubLocalStorage()
+
+    setSelectedModels('newapi', 'image', ['openai', 'gpt-image-2', 'gemini', 'openai_generations'])
+
+    expect(getSelectedModels('newapi', 'image')).toEqual(['gpt-image-2'])
   })
 })

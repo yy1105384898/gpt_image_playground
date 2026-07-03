@@ -1,3 +1,5 @@
+import { uniqueModelIds } from './modelIds'
+
 export type PlaygroundApiFormat = 'openai' | 'gemini'
 
 export interface PlaygroundModelChannel {
@@ -77,12 +79,7 @@ export function normalizePlaygroundBaseUrl(baseUrl: string): string {
 }
 
 function uniqueModels(models: unknown): string[] {
-  if (!Array.isArray(models)) return []
-  return Array.from(new Set(
-    models
-      .map((model) => (typeof model === 'string' ? model.trim() : ''))
-      .filter(Boolean),
-  ))
+  return uniqueModelIds(models)
 }
 
 function normalizeApiFormat(value: unknown): PlaygroundApiFormat {

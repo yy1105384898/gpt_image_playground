@@ -69,4 +69,23 @@ describe('playground model channels', () => {
       models: ['sora-2'],
     })
   })
+
+  it('removes provider and endpoint names from saved channel models', () => {
+    stubLocalStorage({
+      [PLAYGROUND_MODEL_CHANNELS_STORAGE_KEY]: JSON.stringify([
+        {
+          id: 'image-channel',
+          name: '生图',
+          apiFormat: 'openai',
+          baseUrl: 'https://example.com/v1',
+          apiKey: 'custom-key',
+          models: ['openai', 'gemini', 'openai_edit', 'openai_generations', 'gpt-image-2', 'flux-pro-2'],
+        },
+      ]),
+    })
+
+    const channels = getPlaygroundModelChannels()
+
+    expect(channels[2].models).toEqual(['gpt-image-2', 'flux-pro-2'])
+  })
 })
