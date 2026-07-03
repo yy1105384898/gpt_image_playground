@@ -55,6 +55,10 @@ function selectedModelsKey(target: string, purpose: PlaygroundApiPurpose) {
 const channelModelCache = new Map<string, string[]>()
 const channelModelInflight = new Map<string, Promise<string[]>>()
 
+function channelModelsKey(target: string) {
+  return `all:${target}`
+}
+
 function readStoredChannelModels(key: string): string[] | null {
   if (typeof window === 'undefined') return null
   try {
@@ -148,16 +152,25 @@ function tokenForTargetPurpose(target: string, purpose: PlaygroundApiPurpose): s
   return channel?.apiKey.trim() ?? ''
 }
 
-async function fetchChannelModels(target: string, purpose: PlaygroundApiPurpose): Promise<string[]> {
-  const profile = profileForPurpose(purpose)
+function tokenForTarget(target: string): string {
+  const channel = findPlaygroundModelChannelByTarget(target)
+  if (channel?.apiKey.trim()) return channel.apiKey.trim()
+  for (const purpose of ['image', 'video', 'text'] as const) {
+    const token = tokenForTargetPurpose(target, purpose)
+    if (token.trim()) return token
+  }
+  return ''
+}
+
+async function fetchChannelModels(target: string): Promise<string[]> {
+  const profile = profileForPurpose('image') ?? profileForPurpose('video') ?? profileForPurpose('text')
   const apiTarget = resolvePlaygroundModelChannelTarget(target)
-  const auth = authHeader(tokenForTargetPurpose(target, purpose) || profile?.apiKey || '')
+  const auth = authHeader(tokenForTarget(target) || profile?.apiKey || '')
   const proxyConfig = readClientDevProxyConfig()
   const useApiProxy = shouldUseApiProxy(profile?.apiProxy ?? true, proxyConfig)
   const url = buildApiUrl(apiTarget, 'models', proxyConfig, useApiProxy)
   const headers: Record<string, string> = {
     'X-YY-API-Target': apiTarget,
-    'X-YY-API-Purpose': purpose,
   }
   if (auth) headers.Authorization = auth
   try {
@@ -181,19 +194,14 @@ async function fetchChannelModels(target: string, purpose: PlaygroundApiPurpose)
         cache: 'no-store',
         body: JSON.stringify({
           connection_mode: 'custom',
-          model_kind: purpose,
+          model_kind: 'all',
           api_url: apiTarget,
           api_key: auth.replace(/^Bearer\s+/i, ''),
         }),
       })
       if (resp.ok) {
         const json = await resp.json()
-        const keyed = purpose === 'image'
-          ? json?.image_models
-          : purpose === 'text'
-            ? json?.text_models
-            : json?.video_models
-        const list = Array.isArray(keyed) && keyed.length ? keyed : json?.models
+        const list = json?.models
         if (Array.isArray(list)) {
           return Array.from(new Set(list.filter((item): item is string => typeof item === 'string' && item.trim().length > 0).map((item) => item.trim())))
         }
@@ -207,28 +215,49 @@ async function fetchChannelModels(target: string, purpose: PlaygroundApiPurpose)
 
 export async function getChannelModels(target: string, purpose: PlaygroundApiPurpose, force = false): Promise<string[]> {
   const key = selectedModelsKey(target, purpose)
+  const rawKey = channelModelsKey(target)
   const channel = findPlaygroundModelChannelByTarget(target)
-  if (!force && channel?.models.length) return channel.models
+  if (!force && channel?.models.length) return channel.models.filter((model) => isModelForPurpose(model, purpose))
   if (!force && channelModelCache.has(key)) return channelModelCache.get(key)!
+  if (!force && channelModelCache.has(rawKey)) {
+    const models = channelModelCache.get(rawKey)!.filter((model) => isModelForPurpose(model, purpose))
+    channelModelCache.set(key, models)
+    return models
+  }
   if (!force) {
-    const stored = readStoredChannelModels(key)
+    const stored = readStoredChannelModels(rawKey)
     if (stored) {
-      channelModelCache.set(key, stored)
-      return stored
+      channelModelCache.set(rawKey, stored)
+      const models = stored.filter((model) => isModelForPurpose(model, purpose))
+      channelModelCache.set(key, models)
+      return models
     }
   }
   if (!force && channelModelInflight.has(key)) return channelModelInflight.get(key)!
-  const task = (async () => {
+  if (channelModelInflight.has(rawKey)) {
+    return channelModelInflight.get(rawKey)!.then((models) => models.filter((model) => isModelForPurpose(model, purpose)))
+  }
+  const rawTask = (async () => {
     try {
-      const all = await fetchChannelModels(target, purpose)
-      channelModelCache.set(key, all)
-      writeStoredChannelModels(key, all)
+      const all = await fetchChannelModels(target)
+      channelModelCache.set(rawKey, all)
+      writeStoredChannelModels(rawKey, all)
       return all
     } finally {
-      channelModelInflight.delete(key)
+      channelModelInflight.delete(rawKey)
     }
   })()
+  const task = rawTask
+    .then((all) => {
+      const models = all.filter((model) => isModelForPurpose(model, purpose))
+      channelModelCache.set(key, models)
+      return models
+    })
+    .finally(() => {
+      channelModelInflight.delete(key)
+    })
   channelModelInflight.set(key, task)
+  channelModelInflight.set(rawKey, rawTask)
   return task
 }
 

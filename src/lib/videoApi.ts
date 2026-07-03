@@ -12,6 +12,7 @@
 import { useStore } from '../store'
 import { buildApiUrl, getPlaygroundApiResolvedTarget, getProxyRequestHeaders, readClientDevProxyConfig, shouldUseApiProxy } from './devProxy'
 import { dataUrlToBlob } from './canvasImage'
+import { isModelForPurpose } from './modelCatalog'
 import type { ApiProfile } from '../types'
 
 export const VIDEO_MODELS = ['grok-video-1.0', 'grok-video-1.5'] as const
@@ -201,6 +202,9 @@ export interface CreateVideoResult {
 }
 
 export async function createVideo(params: VideoGenParams, signal?: AbortSignal): Promise<CreateVideoResult> {
+  if (!isModelForPurpose(params.model, 'video')) {
+    throw new Error(`当前模型 ${params.model || '未选择'} 不是视频模型，请先在设置里选择视频模型`)
+  }
   const profile = getActiveProfile()
   const proxyConfig = readClientDevProxyConfig()
   const useApiProxy = shouldUseApiProxy(profile.apiProxy, proxyConfig)

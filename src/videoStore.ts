@@ -3,6 +3,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { VIDEO_MODELS, VIDEO_DURATIONS, VIDEO_ASPECTS, type VideoMode, type VideoStatus } from './lib/videoApi'
+import { isModelForPurpose } from './lib/modelCatalog'
 
 export interface VideoTask {
   id: string
@@ -73,14 +74,16 @@ export const useVideoStore = create<VideoState>()(
       }),
       merge: (persisted, current) => {
         const state = persisted as Partial<VideoState>
+        const params = {
+          ...current.params,
+          ...(state.params ?? {}),
+          referenceImageDataUrl: undefined,
+        }
+        if (!isModelForPurpose(params.model, 'video')) params.model = DEFAULT_PARAMS.model
         return {
           ...current,
           ...state,
-          params: {
-            ...current.params,
-            ...(state.params ?? {}),
-            referenceImageDataUrl: undefined,
-          },
+          params,
           tasks: state.tasks ?? current.tasks,
         }
       },
