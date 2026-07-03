@@ -1059,7 +1059,7 @@ export default function VideoWorkspace() {
                   const channelApiKey = findPlaygroundModelChannelByTarget(target)?.apiKey
                   const videoProfile = useStore.getState().settings.profiles.find((profile) => profile.id === 'yy-video-profile')
                   const storedApiKey = getStoredPlaygroundPurposeConfig(target, 'video').apiKey
-                  const apiKey = storedApiKey?.trim() || videoProfile?.apiKey || channelApiKey || ''
+                  const apiKey = channelApiKey?.trim() || storedApiKey?.trim() || videoProfile?.apiKey || ''
                   setPlaygroundApiChannelTarget(target, 'video')
                   savePlaygroundPurposeConfig(target, 'video', { apiKey, model })
                   useStore.getState().setSettings({

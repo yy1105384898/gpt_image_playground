@@ -1932,7 +1932,8 @@ export default function InputBar() {
       onModelChange={(target, model) => {
         const channelApiKey = findPlaygroundModelChannelByTarget(target)?.apiKey
         const storedApiKey = getStoredPlaygroundPurposeConfig(target, 'image').apiKey
-        const apiKey = storedApiKey?.trim() || activeProfile.apiKey || channelApiKey || ''
+        const imageProfile = settings.profiles.find((profile) => profile.id === 'yy-image-profile')
+        const apiKey = channelApiKey?.trim() || storedApiKey?.trim() || imageProfile?.apiKey || ''
         setPlaygroundApiChannelTarget(target, 'image')
         savePlaygroundPurposeConfig(target, 'image', { apiKey, model })
         const imageProfileId = settings.profiles.some((p) => p.id === 'yy-image-profile')

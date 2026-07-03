@@ -36,6 +36,7 @@ import { getChannelModelList, getChannelModels, getDefaultSelectedModels, getSel
 import { getStoredPlaygroundPurposeConfig, savePlaygroundPurposeConfig } from '../lib/playgroundPurposeConfig'
 import {
   createPlaygroundModelChannel,
+  findPlaygroundModelChannelByTarget,
   getPlaygroundModelChannelRef,
   getPlaygroundModelChannelTarget,
   getPlaygroundModelChannels,
@@ -169,8 +170,9 @@ function getVaultTokenForPurpose(target: string, purpose: PlaygroundApiPurpose):
 
 function resolveStoredPurposeConfig(target: string, purpose: PlaygroundApiPurpose) {
   const stored = getStoredPlaygroundPurposeConfig(target, purpose)
+  const channelApiKey = findPlaygroundModelChannelByTarget(target)?.apiKey.trim()
   return {
-    apiKey: stored?.apiKey ?? getVaultTokenForPurpose(target, purpose),
+    apiKey: channelApiKey || stored?.apiKey || getVaultTokenForPurpose(target, purpose),
     model: stored?.model ?? DEFAULT_SIMPLIFIED_MODELS[purpose],
   }
 }
@@ -1185,7 +1187,7 @@ export default function SettingsModal() {
     }
     const channel = findChannelByRef(target)
     const storedConfig = getStoredPlaygroundPurposeConfig(target, purpose)
-    const apiKey = storedConfig.apiKey?.trim() || getVaultTokenForPurpose(target, purpose) || profile.apiKey || channel?.apiKey || ''
+    const apiKey = channel?.apiKey.trim() || storedConfig.apiKey?.trim() || getVaultTokenForPurpose(target, purpose) || profile.apiKey || ''
     setPlaygroundApiChannelTarget(target, purpose)
     setApiChannelTargets((targets) => ({ ...targets, [purpose]: target }))
     saveStoredPurposeConfig(target, purpose, {

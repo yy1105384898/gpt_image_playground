@@ -205,7 +205,7 @@ export default function ChatWorkspace() {
               onSelect={(target, nextModel) => {
                 const channelApiKey = findPlaygroundModelChannelByTarget(target)?.apiKey
                 const storedApiKey = getStoredPlaygroundPurposeConfig(target, 'text').apiKey
-                const apiKey = storedApiKey?.trim() || getTextProfile()?.apiKey || channelApiKey || ''
+                const apiKey = channelApiKey?.trim() || storedApiKey?.trim() || getTextProfile()?.apiKey || ''
                 if (target) setPlaygroundApiChannelTarget(target, 'text')
                 if (target) savePlaygroundPurposeConfig(target, 'text', { apiKey, model: nextModel })
                 if (target) {

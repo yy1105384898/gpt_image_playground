@@ -46,6 +46,10 @@ import { callAgentConversationTitleApi, callAgentResponsesApi, callBatchImageSin
 import { collectAgentRoundOutputImageSlots, extractAgentReferenceIds, getAgentCurrentReferenceId, getAgentGeneratedImageReferenceId, replaceAgentPromptImageReferencesForApi } from './lib/agentImageReferences'
 import { showBrowserNotification } from './lib/browserNotification'
 import { IMAGE_FETCH_CORS_HINT } from './lib/imageApiShared'
+import { getPlaygroundApiChannelTarget } from './lib/devProxy'
+import { findPlaygroundModelChannelByTarget, resolvePlaygroundModelChannelTarget } from './lib/playgroundChannels'
+import { getStoredPlaygroundPurposeConfig } from './lib/playgroundPurposeConfig'
+import { firstModelForPurpose, isModelForPurpose } from './lib/modelPurpose'
 import { getFalErrorMessage, getFalQueuedImageResult } from './lib/falAiImageApi'
 import { getCustomQueuedImageResult } from './lib/openaiCompatibleImageApi'
 import { validateMaskMatchesImage } from './lib/canvasImage'
@@ -1842,15 +1846,50 @@ function getFallbackImageProfile(settings: AppSettings): ApiProfile | null {
   )
 }
 
+function resolveImagePurposeApiProfile(profile: ApiProfile): ApiProfile {
+  if (profile.provider !== 'openai') return profile
+
+  const target = getPlaygroundApiChannelTarget('image')
+  const channel = findPlaygroundModelChannelByTarget(target)
+  const storedConfig = getStoredPlaygroundPurposeConfig(target, 'image')
+  const shouldBindImageChannel =
+    profile.id === SIMPLIFIED_IMAGE_PROFILE_ID ||
+    Boolean(channel?.apiKey.trim() || channel?.models.length || storedConfig.apiKey?.trim() || storedConfig.model?.trim())
+
+  if (!shouldBindImageChannel) return profile
+
+  const storedModel = storedConfig.model?.trim() ?? ''
+  const profileModel = profile.model.trim()
+  const channelModel = firstModelForPurpose(channel?.models, 'image')
+  const model = isModelForPurpose(storedModel, 'image')
+    ? storedModel
+    : isModelForPurpose(profileModel, 'image')
+      ? profileModel
+      : channelModel || profileModel
+
+  return {
+    ...profile,
+    baseUrl: resolvePlaygroundModelChannelTarget(target),
+    apiKey: channel?.apiKey.trim() || storedConfig.apiKey?.trim() || profile.apiKey,
+    model,
+    apiMode: 'images',
+    apiProxy: true,
+  }
+}
+
 function getImageTaskApiProfile(settings: AppSettings): ApiProfile {
   const activeProfile = getActiveApiProfile(settings)
   const imageProfile = getFallbackImageProfile(settings)
-  return isDedicatedNonImageProfile(activeProfile) && imageProfile ? imageProfile : activeProfile
+  const selectedProfile =
+    (isDedicatedNonImageProfile(activeProfile) && imageProfile) ||
+    (activeProfile.id === SIMPLIFIED_IMAGE_PROFILE_ID && imageProfile) ||
+    activeProfile
+  return resolveImagePurposeApiProfile(selectedProfile)
 }
 
 function getExecutableImageTaskApiProfile(settings: AppSettings, task: TaskRecord): ApiProfile | null {
   const taskProfile = getTaskApiProfile(settings, task)
-  if (taskProfile && !isDedicatedNonImageProfile(taskProfile)) return taskProfile
+  if (taskProfile && !isDedicatedNonImageProfile(taskProfile)) return resolveImagePurposeApiProfile(taskProfile)
   return getImageTaskApiProfile(settings)
 }
 

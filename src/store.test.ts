@@ -1,7 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { strToU8, zipSync } from 'fflate'
 import { DEFAULT_PARAMS } from './types'
 import { createDefaultFalProfile, createDefaultOpenAIProfile, DEFAULT_RESPONSES_MODEL, DEFAULT_SETTINGS, normalizeSettings } from './lib/apiProfiles'
+import { PLAYGROUND_API_CHANNEL_STORAGE_KEYS } from './lib/devProxy'
+import { DEFAULT_PLAYGROUND_MODEL_CHANNELS, PLAYGROUND_MODEL_CHANNELS_STORAGE_KEY } from './lib/playgroundChannels'
+import { PLAYGROUND_CHANNEL_CONFIG_STORAGE_KEY } from './lib/playgroundPurposeConfig'
 import type { AgentConversation, ExportData, StoredImage, StoredImageThumbnail, TaskRecord } from './types'
 import { getSelectedImageMentionLabel } from './lib/promptImageMentions'
 vi.mock('./lib/db', () => {
@@ -187,6 +190,22 @@ async function flushAsyncTasks(iterations = 5) {
   for (let i = 0; i < iterations; i += 1) await new Promise((resolve) => setTimeout(resolve, 0))
 }
 
+function stubWindowLocalStorage() {
+  const store = new Map<string, string>()
+  const localStorage = {
+    getItem: vi.fn((key: string) => store.get(key) ?? null),
+    setItem: vi.fn((key: string, value: string) => { store.set(key, value) }),
+    removeItem: vi.fn((key: string) => { store.delete(key) }),
+    clear: vi.fn(() => { store.clear() }),
+  }
+  vi.stubGlobal('window', { localStorage })
+  return localStorage
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
 describe('favorite collection deletion', () => {
   const collectionA = { id: 'collection-a', name: '收藏夹 A', createdAt: 1, updatedAt: 1 }
   const collectionB = { id: 'collection-b', name: '收藏夹 B', createdAt: 1, updatedAt: 1 }
@@ -351,7 +370,7 @@ describe('mask draft lifecycle in store actions', () => {
     const [request] = vi.mocked(callImageApi).mock.calls[0]
     expect(request.settings).toMatchObject({
       activeProfileId: imageProfile.id,
-      baseUrl: imageProfile.baseUrl,
+      baseUrl: DEFAULT_PLAYGROUND_MODEL_CHANNELS[0].baseUrl,
       apiKey: imageProfile.apiKey,
       model: imageProfile.model,
     })
@@ -359,6 +378,76 @@ describe('mask draft lifecycle in store actions', () => {
       apiProfileId: imageProfile.id,
       apiProfileName: imageProfile.name,
       apiModel: imageProfile.model,
+    })
+  })
+
+  it('prefers the configured image channel key over stale profile and purpose keys', async () => {
+    const localStorage = stubWindowLocalStorage()
+    const { callImageApi } = await import('./lib/api')
+    vi.mocked(callImageApi).mockClear()
+    vi.mocked(callImageApi).mockResolvedValueOnce({
+      images: [],
+      actualParams: {},
+      actualParamsList: [],
+      revisedPrompts: [],
+    })
+    localStorage.setItem(PLAYGROUND_API_CHANNEL_STORAGE_KEYS.image, 'newapi')
+    localStorage.setItem(PLAYGROUND_MODEL_CHANNELS_STORAGE_KEY, JSON.stringify([
+      {
+        id: 'newapi',
+        name: '生图',
+        apiFormat: 'openai',
+        baseUrl: 'https://yynewapi.yangyangnj.top/v1',
+        apiKey: 'image-channel-key',
+        models: ['flux-pro-2'],
+      },
+      {
+        id: 'subapi',
+        name: 'YY SubAPI',
+        apiFormat: 'openai',
+        baseUrl: 'https://yysubapi.yangyangnj.top/v1',
+        apiKey: '',
+        models: [],
+      },
+    ]))
+    localStorage.setItem(PLAYGROUND_CHANNEL_CONFIG_STORAGE_KEY, JSON.stringify({
+      newapi: {
+        image: { apiKey: 'stale-video-key', model: 'flux-pro-2' },
+        video: { apiKey: 'video-key', model: 'grok-video-1.0' },
+      },
+    }))
+    const imageProfile = createDefaultOpenAIProfile({
+      id: 'yy-image-profile',
+      name: '生图模型',
+      baseUrl: 'https://yynewapi.yangyangnj.top/v1',
+      apiKey: 'polluted-profile-key',
+      model: 'flux-pro-2',
+      apiMode: 'images',
+    })
+    useStore.setState({
+      settings: normalizeSettings({
+        ...DEFAULT_SETTINGS,
+        apiKey: 'top-level-video-key',
+        model: 'grok-video-1.0',
+        profiles: [imageProfile],
+        activeProfileId: imageProfile.id,
+        agentApiConfigMode: 'hybrid',
+        agentImageProfileId: imageProfile.id,
+      }),
+      prompt: 'prompt',
+      params: { ...DEFAULT_PARAMS },
+    })
+
+    await submitTask()
+    await flushAsyncTasks()
+
+    const [request] = vi.mocked(callImageApi).mock.calls[0]
+    expect(request.settings).toMatchObject({
+      activeProfileId: imageProfile.id,
+      baseUrl: 'https://yynewapi.yangyangnj.top/v1',
+      apiKey: 'image-channel-key',
+      model: 'flux-pro-2',
+      apiMode: 'images',
     })
   })
 
@@ -401,7 +490,7 @@ describe('mask draft lifecycle in store actions', () => {
     const [request] = vi.mocked(callImageApi).mock.calls[0]
     expect(request.settings).toMatchObject({
       activeProfileId: imageProfile.id,
-      baseUrl: imageProfile.baseUrl,
+      baseUrl: DEFAULT_PLAYGROUND_MODEL_CHANNELS[0].baseUrl,
       apiKey: imageProfile.apiKey,
       model: imageProfile.model,
     })
