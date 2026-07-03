@@ -19,9 +19,9 @@ import {
 } from './playgroundChannels'
 import { getStoredPlaygroundPurposeConfig } from './playgroundPurposeConfig'
 import { getTokenVaultItems } from './tokenVault'
-import { isModelForPurpose } from './modelPurpose'
+import { inferPurposeFromLabel, isModelForPurpose, isModelForPurposeWithHint } from './modelPurpose'
 
-export { isModelForPurpose } from './modelPurpose'
+export { inferPurposeFromLabel, isModelForPurpose, isModelForPurposeWithHint } from './modelPurpose'
 
 export interface ModelGroup {
   id: string
@@ -59,6 +59,31 @@ function modelIdFromItem(item: unknown): string {
   return ''
 }
 
+const MODEL_CONTAINER_KEYS = new Set(['data', 'models', 'model_list', 'available_models', 'items', 'list', 'result', 'results'])
+const NON_MODEL_OBJECT_KEYS = new Set([
+  'object',
+  'success',
+  'message',
+  'msg',
+  'error',
+  'code',
+  'status',
+  'total',
+  'count',
+  'page',
+  'limit',
+])
+const MODEL_KEY_HINT_RE = /gpt|claude|gemini|deepseek|qwen|kimi|glm|llama|mistral|grok|doubao|hunyuan|ernie|nova|command|sora|veo|kling|可灵|video|seedance|runway|pika|hailuo|海螺|vidu|wan|t2v|i2v|flux|dall|image|img|imagen|seedream|stable|midjourney|mj|recraft|ideogram|jimeng|即梦|cogview|cogvideo|tts|whisper|embedding|rerank|[-_/.:]\d/i
+
+function modelIdFromObjectKey(key: string, value: unknown): string {
+  const trimmed = key.trim()
+  const normalized = trimmed.toLowerCase()
+  if (!trimmed || MODEL_CONTAINER_KEYS.has(normalized) || NON_MODEL_OBJECT_KEYS.has(normalized)) return ''
+  if (!MODEL_KEY_HINT_RE.test(trimmed)) return ''
+  if (value == null) return ''
+  return trimmed
+}
+
 function collectModelIdsFromList(list: unknown[]): string[] {
   return list.map(modelIdFromItem).filter(Boolean)
 }
@@ -81,8 +106,13 @@ export function extractModelIds(payload: unknown): string[] {
     const directId = modelIdFromItem(value)
     if (directId) ids.push(directId)
     const record = value as Record<string, unknown>
-    for (const key of ['data', 'models', 'model_list', 'available_models', 'items', 'list', 'result', 'results']) {
-      visit(record[key], depth + 1)
+    for (const [key, child] of Object.entries(record)) {
+      const normalizedKey = key.toLowerCase()
+      const keyModel = modelIdFromObjectKey(key, child)
+      if (keyModel) ids.push(keyModel)
+      if (MODEL_CONTAINER_KEYS.has(normalizedKey) || child == null || typeof child === 'object') {
+        visit(child, depth + 1)
+      }
     }
   }
   visit(payload)
@@ -134,7 +164,7 @@ function readSelectedModelsState(): SelectedModelsState {
 }
 
 export function getSelectedModels(target: string, purpose: PlaygroundApiPurpose): string[] {
-  return readSelectedModelsState()[target]?.[purpose]?.filter((model) => Boolean(model) && isModelForPurpose(model, purpose)) ?? []
+  return readSelectedModelsState()[target]?.[purpose]?.filter(Boolean) ?? []
 }
 
 export function hasSelectedModelsConfig(target: string, purpose: PlaygroundApiPurpose): boolean {
@@ -146,14 +176,14 @@ export function setSelectedModels(target: string, purpose: PlaygroundApiPurpose,
   const state = readSelectedModelsState()
   state[target] = {
     ...(state[target] ?? {}),
-    [purpose]: Array.from(new Set(models.filter((model) => Boolean(model) && isModelForPurpose(model, purpose)))),
+    [purpose]: Array.from(new Set(models.filter(Boolean))),
   }
   window.localStorage.setItem(SELECTED_MODELS_STORAGE_KEY, JSON.stringify(state))
   invalidateModelCatalogCache(purpose)
 }
 
 export function getDefaultSelectedModels(models: string[], purpose: PlaygroundApiPurpose): string[] {
-  return models.filter((model) => isModelForPurpose(model, purpose))
+  return Array.from(new Set(models.filter(Boolean)))
 }
 
 function authHeader(apiKey: string): string {
@@ -275,7 +305,8 @@ export async function getChannelModels(target: string, purpose: PlaygroundApiPur
   const key = selectedModelsKey(target, purpose)
   if (!force && channelModelCache.has(key)) return channelModelCache.get(key)!
   const all = await getChannelModelList(target, force)
-  const models = all.filter((model) => isModelForPurpose(model, purpose))
+  const hint = inferPurposeFromLabel(findPlaygroundModelChannelByTarget(target)?.name ?? '')
+  const models = all.filter((model) => isModelForPurposeWithHint(model, purpose, hint))
   channelModelCache.set(key, models)
   return models
 }
@@ -308,10 +339,11 @@ export async function getModelGroups(purpose: PlaygroundApiPurpose, force = fals
         const target = getPlaygroundModelChannelRef(channel)
         try {
           const allModels = await getChannelModels(target, purpose, force)
+          const hint = inferPurposeFromLabel(channel.name)
           const selected = getSelectedModels(target, purpose)
           const allowed = hasSelectedModelsConfig(target, purpose)
-            ? allModels.filter((id) => selected.includes(id) && isModelForPurpose(id, purpose))
-            : allModels.filter((id) => isModelForPurpose(id, purpose))
+            ? allModels.filter((id) => selected.includes(id) && isModelForPurposeWithHint(id, purpose, hint))
+            : allModels.filter((id) => isModelForPurposeWithHint(id, purpose, hint))
           return { id: channel.id, label: channel.name, target, models: allowed }
         } catch {
           return { id: channel.id, label: channel.name, target, models: [] }

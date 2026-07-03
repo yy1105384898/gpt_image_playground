@@ -32,7 +32,7 @@ import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_STREAM_PARTIAL_IMAGES, type Agen
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { DEFAULT_DROPDOWN_MAX_HEIGHT, getDropdownMaxHeight } from '../lib/dropdown'
-import { getChannelModelList, getChannelModels, getDefaultSelectedModels, getSelectedModels, invalidateModelCatalogCache, isModelForPurpose, setSelectedModels } from '../lib/modelCatalog'
+import { getChannelModelList, getChannelModels, getDefaultSelectedModels, getSelectedModels, inferPurposeFromLabel, invalidateModelCatalogCache, isModelForPurpose, isModelForPurposeWithHint, setSelectedModels } from '../lib/modelCatalog'
 import { getStoredPlaygroundPurposeConfig, savePlaygroundPurposeConfig } from '../lib/playgroundPurposeConfig'
 import {
   createPlaygroundModelChannel,
@@ -276,6 +276,15 @@ function baseDraftProfileModel(draft: AppSettings, profileId: string) {
 
 function uniqueModelOptions(models: string[]) {
   return Array.from(new Set(models.map((model) => model.trim()).filter(Boolean)))
+}
+
+function channelPurposeHint(channel: PlaygroundModelChannel): PlaygroundApiPurpose | null {
+  return inferPurposeFromLabel(`${channel.name} ${channel.id}`)
+}
+
+function channelModelsForPurpose(channel: PlaygroundModelChannel, purpose: PlaygroundApiPurpose, models: string[]) {
+  const hint = channelPurposeHint(channel)
+  return uniqueModelOptions(models).filter((model) => isModelForPurposeWithHint(model, purpose, hint))
 }
 
 function getImportedProfileFromMergedSettings(
@@ -958,10 +967,10 @@ export default function SettingsModal() {
   }
 
   const reconcileFetchedPurposeModels = (target: string, purpose: PlaygroundApiPurpose, purposeModels: string[]) => {
-    const fetchedModels = uniqueModelOptions(purposeModels).filter((model) => isModelForPurpose(model, purpose))
+    const fetchedModels = uniqueModelOptions(purposeModels)
     const actualModelSet = new Set(fetchedModels)
     const selected = getSelectedModels(target, purpose)
-    const sanitizedSelected = selected.filter((model) => actualModelSet.has(model) && isModelForPurpose(model, purpose))
+    const sanitizedSelected = selected.filter((model) => actualModelSet.has(model))
     const nextSelected = sanitizedSelected.length ? sanitizedSelected : getDefaultSelectedModels(fetchedModels, purpose)
     setSelectedModels(target, purpose, nextSelected)
 
@@ -974,7 +983,7 @@ export default function SettingsModal() {
     const currentModel = target === activeTarget
       ? baseDraftProfileModel(draft, profileId)
       : (storedConfig.model ?? '')
-    if (actualModelSet.has(currentModel) && isModelForPurpose(currentModel, purpose)) return
+    if (actualModelSet.has(currentModel)) return
 
     saveStoredPurposeConfig(target, purpose, { model: nextDefaultModel })
     if (target === activeTarget) updateSimplifiedProfile(profileId, { model: nextDefaultModel }, true)
@@ -1028,7 +1037,7 @@ export default function SettingsModal() {
       }
       updateChannel(channel.id, { models })
       for (const { purpose } of MODEL_CONFIG_GROUPS) {
-        const purposeModels = models.filter((model) => isModelForPurpose(model, purpose))
+        const purposeModels = channelModelsForPurpose(channel, purpose, models)
         reconcileFetchedPurposeModels(channel.id, purpose, purposeModels)
         setModelPickerState((state) => ({ ...state, [`${purpose}:${channel.id}`]: { loading: false, models: purposeModels } }))
       }
@@ -1052,7 +1061,7 @@ export default function SettingsModal() {
         const models = uniqueModelOptions(await getChannelModelList(channel.id, true))
         if (!models.length) return [channel.id, null] as const
         for (const { purpose } of MODEL_CONFIG_GROUPS) {
-          const purposeModels = models.filter((model) => isModelForPurpose(model, purpose))
+          const purposeModels = channelModelsForPurpose(channel, purpose, models)
           reconcileFetchedPurposeModels(channel.id, purpose, purposeModels)
           setModelPickerState((state) => ({ ...state, [`${purpose}:${channel.id}`]: { loading: false, models: purposeModels } }))
         }
@@ -1106,6 +1115,11 @@ export default function SettingsModal() {
     void getChannelModels(target, purpose, true)
       .then((models) => {
         const fetchedModels = uniqueModelOptions(models)
+        if (!fetchedModels.length) {
+          setModelPickerState((state) => ({ ...state, [key]: { loading: false, models: state[key]?.models ?? [] } }))
+          showToast('未获取到该用途模型，请确认渠道分组、Base URL、API Key 或模型权限', 'error')
+          return
+        }
         reconcileFetchedPurposeModels(target, purpose, fetchedModels)
         setModelPickerState((state) => ({ ...state, [key]: { loading: false, models: fetchedModels } }))
         setModelPickerVersion((version) => version + 1)
@@ -1121,15 +1135,14 @@ export default function SettingsModal() {
     const entries = modelChannels.flatMap((channel) => {
       const target = channelTarget(channel)
       const pickerModels = modelPickerState[`${purpose}:${target}`]?.models ?? []
-      return uniqueModelOptions([...channel.models, ...pickerModels])
-        .filter((model) => isModelForPurpose(model, purpose))
+      return channelModelsForPurpose(channel, purpose, [...channel.models, ...pickerModels])
         .map((model) => ({
           target,
           model,
           label: `${model}（${channel.name || '未命名渠道'}）`,
         }))
     })
-    if (currentModel && isModelForPurpose(currentModel, purpose) && !entries.some((entry) => entry.target === getPurposeChannelTarget(purpose) && entry.model === currentModel)) {
+    if (currentModel && isModelAllowedForPurpose(getPurposeChannelTarget(purpose), currentModel, purpose) && !entries.some((entry) => entry.target === getPurposeChannelTarget(purpose) && entry.model === currentModel)) {
       entries.unshift({
         target: getPurposeChannelTarget(purpose),
         model: currentModel,
@@ -1137,6 +1150,11 @@ export default function SettingsModal() {
       })
     }
     return entries
+  }
+
+  const isModelAllowedForPurpose = (target: string, model: string, purpose: PlaygroundApiPurpose) => {
+    const channel = findChannelByRef(target)
+    return isModelForPurposeWithHint(model, purpose, channel ? channelPurposeHint(channel) : null)
   }
 
   const modelOptionValue = (target: string, model: string) => `${target}${MODEL_OPTION_SEPARATOR}${model}`
@@ -1169,7 +1187,7 @@ export default function SettingsModal() {
     const activeTarget = getPurposeChannelTarget(purpose)
     values.forEach((value) => {
       const { target, model } = parseModelOptionValue(value, activeTarget)
-      if (!target || !model || !isModelForPurpose(model, purpose)) return
+      if (!target || !model || !isModelAllowedForPurpose(target, model, purpose)) return
       grouped.set(target, uniqueModelOptions([...(grouped.get(target) ?? []), model]))
     })
     modelChannels.forEach((channel) => {
@@ -1178,7 +1196,7 @@ export default function SettingsModal() {
     })
     const profile = profileByPurpose[purpose]
     const currentSelected = grouped.get(activeTarget) ?? []
-    if (profile && (!currentSelected.includes(profile.model) || !isModelForPurpose(profile.model, purpose))) {
+    if (profile && (!currentSelected.includes(profile.model) || !isModelAllowedForPurpose(activeTarget, profile.model, purpose))) {
       const nextValue = Array.from(grouped.entries())
         .flatMap(([target, models]) => models.map((model) => modelOptionValue(target, model)))[0]
       if (nextValue) updatePurposeDefaultModelFromEntry(purpose, nextValue)
@@ -1191,7 +1209,7 @@ export default function SettingsModal() {
     if (!profile) return
     const { target, model } = parseModelOptionValue(encoded)
     if (!target || !model) return
-    if (!isModelForPurpose(model, purpose)) {
+    if (!isModelAllowedForPurpose(target, model, purpose)) {
       showToast('该模型不属于当前用途', 'error')
       return
     }

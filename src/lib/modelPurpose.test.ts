@@ -11,6 +11,8 @@ describe('model purpose classification', () => {
   })
 
   it('does not classify image-only model names as video', () => {
+    expect(isModelForPurpose('gpt-image-2', 'image')).toBe(true)
+    expect(isModelForPurpose('gpt-image-2', 'text')).toBe(false)
     expect(isModelForPurpose('imagen-4', 'video')).toBe(false)
     expect(isModelForPurpose('imagen-4', 'image')).toBe(true)
     expect(isModelForPurpose('jimeng-image-3.0', 'video')).toBe(false)
