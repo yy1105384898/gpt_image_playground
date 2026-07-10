@@ -35,7 +35,8 @@ export default function ModelSelect({ purpose, value, target, showAllChannels = 
     return { ...group, models: baseModels }
   }), [activeGroups, activeTarget, purpose, value])
 
-  const hasGroups = displayGroups.length > 0
+  const hasGroups = displayGroups.some((group) => group.models.length > 0)
+  const hasCurrentModel = displayGroups.some((group) => group.models.includes(value))
   useEffect(() => {
     if (!enabled) return
     let cancelled = false
@@ -96,6 +97,9 @@ export default function ModelSelect({ purpose, value, target, showAllChannels = 
               <option key={m} value={`${SEP}${m}`}>{modelLabel(activeTarget, m)}</option>
             ))}
         </>
+      )}
+      {hasGroups && value && !hasCurrentModel && (
+        <option value={`${SEP}${value}`} disabled>{modelLabel(activeTarget, value)}</option>
       )}
       {hasGroups && displayGroups.map((g) => (
         <optgroup key={g.id} label={g.label}>
