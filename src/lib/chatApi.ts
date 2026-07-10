@@ -3,6 +3,8 @@ import type { ChatMessage } from '../chatStore'
 import { buildApiUrl, getProxyRequestHeaders, readClientDevProxyConfig, shouldUseApiProxy } from './devProxy'
 import { getApiErrorMessage } from './imageApiShared'
 
+export type TextChatApiMessage = ChatMessage & { imageDataUrls?: string[] }
+
 function createHeaders(profile: ApiProfile): Record<string, string> {
   return {
     Authorization: `Bearer ${profile.apiKey}`,
@@ -99,7 +101,7 @@ async function readSseText(response: Response, onDelta: (delta: string) => void,
 export async function callTextChatApi(opts: {
   profile: ApiProfile
   model: string
-  messages: ChatMessage[]
+  messages: TextChatApiMessage[]
   signal?: AbortSignal
   onDelta?: (delta: string) => void
 }): Promise<string> {
@@ -107,7 +109,12 @@ export async function callTextChatApi(opts: {
   const useApiProxy = shouldUseApiProxy(opts.profile.apiProxy, proxyConfig)
   const input = opts.messages.map((message) => ({
     role: message.role,
-    content: message.content,
+    content: message.role === 'user' && message.imageDataUrls?.length
+      ? [
+          { type: 'input_text', text: message.content },
+          ...message.imageDataUrls.map((imageUrl) => ({ type: 'input_image', image_url: imageUrl })),
+        ]
+      : message.content,
   }))
   const body = {
     model: opts.model || opts.profile.model,

@@ -1,5 +1,5 @@
-import { useEffect, useRef, type ReactNode } from 'react'
-import { ALL_FAVORITES_COLLECTION_ID, clearFailedTasks, getTaskFavoriteCollectionIds, useStore, taskMatchesFilterStatus, taskMatchesSearchQuery } from '../store'
+import { useEffect, useMemo, useRef, type ReactNode } from 'react'
+import { ALL_FAVORITES_COLLECTION_ID, clearFailedTasks, getTaskFavoriteCollectionIds, removeMultipleTasks, useStore, taskMatchesFilterStatus, taskMatchesSearchQuery } from '../store'
 import { useTooltip } from '../hooks/useTooltip'
 import Select from './Select'
 import { ChevronLeftIcon, CollectionManageIcon, FavoriteIcon, PlusIcon, TrashIcon } from './icons'
@@ -57,6 +57,9 @@ export default function SearchBar() {
   const openManageCollectionsModal = useStore((s) => s.openManageCollectionsModal)
   const setShowPromptLibrary = useStore((s) => s.setShowPromptLibrary)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
+  const tasks = useStore((s) => s.tasks)
+  const selectedTaskIds = useStore((s) => s.selectedTaskIds)
+  const setSelectedTaskIds = useStore((s) => s.setSelectedTaskIds)
   const failedCount = useStore((s) => {
     const q = s.searchQuery.trim().toLowerCase()
     return s.tasks.filter((task) => {
@@ -71,6 +74,18 @@ export default function SearchBar() {
   const inCollectionOverview = filterFavorite && !activeFavoriteCollectionId
   const isFailedFilter = filterStatus === 'error'
   const favoriteTooltip = activeFavoriteCollectionId ? '返回收藏夹' : filterFavorite ? '退出收藏夹' : '收藏夹'
+  const visibleTaskIds = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    return tasks.filter((task) => {
+      if (filterFavorite) {
+        if (!task.isFavorite) return false
+        if (activeFavoriteCollectionId && activeFavoriteCollectionId !== ALL_FAVORITES_COLLECTION_ID && !getTaskFavoriteCollectionIds(task).includes(activeFavoriteCollectionId)) return false
+      }
+      if (!taskMatchesFilterStatus(task, filterStatus)) return false
+      return taskMatchesSearchQuery(task, q)
+    }).map((task) => task.id)
+  }, [activeFavoriteCollectionId, filterFavorite, filterStatus, searchQuery, tasks])
+  const allVisibleSelected = visibleTaskIds.length > 0 && visibleTaskIds.every((id) => selectedTaskIds.includes(id))
 
   useEffect(() => {
     const handleDocumentMouseDown = (event: MouseEvent) => {
@@ -129,6 +144,27 @@ export default function SearchBar() {
       setFilterStatus(val)
       clearSelection()
     }
+  }
+
+  const handleSelectAll = () => {
+    const visibleIdSet = new Set(visibleTaskIds)
+    if (allVisibleSelected) {
+      setSelectedTaskIds((current) => current.filter((id) => !visibleIdSet.has(id)))
+      return
+    }
+    setSelectedTaskIds((current) => Array.from(new Set([...current, ...visibleTaskIds])))
+  }
+
+  const handleDeleteSelected = () => {
+    if (!selectedTaskIds.length) return
+    const taskIds = [...selectedTaskIds]
+    setConfirmDialog({
+      title: '批量删除',
+      message: `确定要删除选中的 ${taskIds.length} 个任务吗？`,
+      confirmText: '删除',
+      tone: 'danger',
+      action: () => removeMultipleTasks(taskIds),
+    })
   }
 
   return (
@@ -194,6 +230,29 @@ export default function SearchBar() {
                 <TrashIcon className="h-[18px] w-[18px]" />
               </button>
             )}
+            <SearchActionButton
+              tooltip={allVisibleSelected ? '取消全选' : `全选当前任务（${visibleTaskIds.length}）`}
+              onClick={handleSelectAll}
+              disabled={visibleTaskIds.length === 0}
+              className={`flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-xl border transition-all focus:outline-none focus:ring-2 focus:ring-blue-500/30 disabled:cursor-not-allowed disabled:opacity-40 ${
+                allVisibleSelected
+                  ? 'border-blue-400 bg-blue-400/12 text-blue-300'
+                  : 'border-white/[0.08] bg-white/[0.04] text-gray-400 hover:bg-white/[0.08] hover:text-gray-200'
+              }`}
+            >
+              <svg className="h-[18px] w-[18px]" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <path d="M8 12l2.5 2.5L16 9" />
+              </svg>
+            </SearchActionButton>
+            <SearchActionButton
+              tooltip={selectedTaskIds.length ? `删除选中（${selectedTaskIds.length}）` : '请先选择任务'}
+              onClick={handleDeleteSelected}
+              disabled={selectedTaskIds.length === 0}
+              className="flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.04] text-gray-400 transition-all hover:border-red-400/40 hover:bg-red-500/10 hover:text-red-300 focus:outline-none focus:ring-2 focus:ring-red-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <TrashIcon className="h-[18px] w-[18px]" />
+            </SearchActionButton>
           </div>
         ) : (
           <div />

@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { InputImage } from '../types'
 import { createChatMessage, DEFAULT_CHAT_MODEL, useChatStore, type ChatConversation } from '../chatStore'
-import { useStore } from '../store'
+import { createInputImageFromFile, deleteImageIfUnreferenced, ensureImageCached, useStore } from '../store'
 import { callTextChatApi } from '../lib/chatApi'
+import { copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import { getPlaygroundApiChannelTarget, getPlaygroundApiResolvedTarget, setPlaygroundApiChannelTarget } from '../lib/devProxy'
 import { getModelGroups } from '../lib/modelCatalog'
 import { getStoredPlaygroundPurposeConfig, savePlaygroundPurposeConfig } from '../lib/playgroundPurposeConfig'
@@ -10,7 +12,7 @@ import { getPlaygroundModelChannelApiKey, resolvePlaygroundModelChannelTarget } 
 import ModelSelect from './ModelSelect'
 import MarkdownRenderer from './MarkdownRenderer'
 import Select from './Select'
-import { BrandLogo, CopyIcon, PlusIcon, RefreshIcon, TrashIcon } from './icons'
+import { BrandLogo, CloseIcon, CopyIcon, PlusIcon, RefreshIcon, TrashIcon } from './icons'
 
 const QUICK_PROMPTS = [
   '帮我写一段商品介绍',
@@ -21,6 +23,24 @@ const QUICK_PROMPTS = [
 ]
 
 const TEXT_PROFILE_ID = 'yy-text-profile'
+const MAX_CHAT_REFERENCE_IMAGES = 8
+
+function ChatImageThumb({ imageId, onClick }: { imageId: string; onClick: () => void }) {
+  const [src, setSrc] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    void ensureImageCached(imageId).then((value) => {
+      if (!cancelled && value) setSrc(value)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [imageId])
+
+  if (!src) return <div className="h-24 w-24 animate-pulse rounded-lg bg-white/[0.06]" />
+  return <img src={src} alt="对话参考图" className="h-24 w-24 cursor-zoom-in rounded-lg object-cover" onClick={onClick} />
+}
 
 function getTextProfile() {
   const settings = normalizeSettings(useStore.getState().settings)
@@ -53,6 +73,7 @@ export default function ChatWorkspace() {
   const updateMessage = useChatStore((s) => s.updateMessage)
   const setStatus = useChatStore((s) => s.setStatus)
   const showToast = useStore((s) => s.showToast)
+  const setLightboxImageId = useStore((s) => s.setLightboxImageId)
   const activeConversation = getActiveConversation(conversations, activeConversationId, model)
   const messages = activeConversation?.messages ?? []
   const activeTarget = activeConversation?.channelTarget || getPlaygroundApiChannelTarget('text')
@@ -64,6 +85,8 @@ export default function ChatWorkspace() {
   ), [settings])
   const abortRef = useRef<AbortController | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [referenceImages, setReferenceImages] = useState<InputImage[]>([])
 
   useEffect(() => {
     if (!activeConversation && conversations.length === 0) createConversation()
@@ -79,26 +102,83 @@ export default function ChatWorkspace() {
     endRef.current?.scrollIntoView({ block: 'end' })
   }, [messages.length, messages[messages.length - 1]?.content, status])
 
+  const copyMessage = useCallback(async (content: string, successMessage = '内容已复制') => {
+    if (!content.trim()) return
+    try {
+      await copyTextToClipboard(content)
+      showToast(successMessage, 'success')
+    } catch (err) {
+      showToast(getClipboardFailureMessage('复制失败', err), 'error')
+    }
+  }, [showToast])
+
   const copyLastAssistant = useCallback(async () => {
     const last = [...messages].reverse().find((message) => message.role === 'assistant' && message.content.trim())
     if (!last) {
       showToast('还没有可复制的回复', 'info')
       return
     }
-    try {
-      await navigator.clipboard.writeText(last.content)
-      showToast('已复制最后回复', 'success')
-    } catch {
-      showToast('复制失败', 'error')
+    await copyMessage(last.content, '已复制最后回复')
+  }, [copyMessage, messages, showToast])
+
+  const handleReferenceUpload = useCallback(async (files: FileList | null) => {
+    if (!files?.length) return
+    const available = MAX_CHAT_REFERENCE_IMAGES - referenceImages.length
+    if (available <= 0) {
+      showToast(`参考图最多 ${MAX_CHAT_REFERENCE_IMAGES} 张`, 'error')
+      return
     }
-  }, [messages, showToast])
+
+    const imageFiles = Array.from(files).filter((file) => file.type.startsWith('image/'))
+    if (!imageFiles.length) {
+      showToast('请选择图片文件', 'error')
+      return
+    }
+
+    try {
+      const added: InputImage[] = []
+      for (const file of imageFiles.slice(0, available)) {
+        const image = await createInputImageFromFile(file)
+        if (image) added.push(image)
+      }
+      if (!added.length) return
+      setReferenceImages((current) => [...current, ...added].slice(0, MAX_CHAT_REFERENCE_IMAGES))
+      showToast(`已添加 ${added.length} 张参考图`, 'success')
+    } catch (err) {
+      showToast(`参考图上传失败：${err instanceof Error ? err.message : String(err)}`, 'error')
+    }
+  }, [referenceImages.length, showToast])
+
+  const removeReferenceImage = useCallback((index: number) => {
+    const image = referenceImages[index]
+    if (!image) return
+    setReferenceImages((current) => current.filter((_, currentIndex) => currentIndex !== index))
+    void deleteImageIfUnreferenced(image.id)
+  }, [referenceImages])
+
+  const cleanupChatImages = useCallback((imageIds: string[]) => {
+    for (const imageId of new Set(imageIds)) void deleteImageIfUnreferenced(imageId)
+  }, [])
+
+  const handleCreateConversation = useCallback(() => {
+    const draftImageIds = referenceImages.map((image) => image.id)
+    setReferenceImages([])
+    createConversation()
+    cleanupChatImages(draftImageIds)
+  }, [cleanupChatImages, createConversation, referenceImages])
+
+  const handleClearConversation = useCallback(() => {
+    const imageIds = messages.flatMap((message) => message.imageIds ?? [])
+    clearActiveConversation()
+    cleanupChatImages(imageIds)
+  }, [cleanupChatImages, clearActiveConversation, messages])
 
   const refreshModels = useCallback(() => {
     void getModelGroups('text', true).then(() => showToast('文本模型已刷新', 'success')).catch(() => showToast('模型刷新失败', 'error'))
   }, [showToast])
 
   const submit = useCallback(async () => {
-    const text = input.trim()
+    const text = input.trim() || (referenceImages.length ? '请分析这些参考图。' : '')
     if (!text || status === 'streaming') return
     const profile = getTextProfile()
     if (!profile?.apiKey?.trim()) {
@@ -106,9 +186,10 @@ export default function ChatWorkspace() {
       return
     }
 
-    const userMessage = createChatMessage('user', text)
+    const userMessage = createChatMessage('user', text, referenceImages.map((image) => image.id))
     const assistantMessage = createChatMessage('assistant', '')
     setInput('')
+    setReferenceImages([])
     addMessage(userMessage)
     addMessage(assistantMessage)
     setStatus('streaming')
@@ -116,7 +197,11 @@ export default function ChatWorkspace() {
     abortRef.current = controller
 
     try {
-      const nextMessages = [...messages, userMessage]
+      const nextMessages = await Promise.all([...messages, userMessage].map(async (message) => ({
+        ...message,
+        imageDataUrls: (await Promise.all((message.imageIds ?? []).map((imageId) => ensureImageCached(imageId))))
+          .filter((value): value is string => Boolean(value)),
+      })))
       const finalText = await callTextChatApi({
         profile: {
           ...profile,
@@ -147,7 +232,7 @@ export default function ChatWorkspace() {
     } finally {
       abortRef.current = null
     }
-  }, [activeConversation?.model, addMessage, input, messages, model, setInput, setStatus, showToast, status, updateMessage])
+  }, [activeConversation?.model, addMessage, input, messages, model, referenceImages, setInput, setStatus, showToast, status, updateMessage])
 
   const stop = useCallback(() => {
     abortRef.current?.abort()
@@ -163,12 +248,14 @@ export default function ChatWorkspace() {
         label: '删除',
         variant: 'danger' as const,
         onClick: () => {
+          const imageIds = conversation.messages.flatMap((message) => message.imageIds ?? [])
           const nextId = deleteConversationAndReturnNext(conversation.id)
           if (!nextId) createConversation()
+          cleanupChatImages(imageIds)
         },
       }],
     })),
-  ], [conversations, createConversation, deleteConversationAndReturnNext])
+  ], [cleanupChatImages, conversations, createConversation, deleteConversationAndReturnNext])
 
   return (
     <main data-home-main className="pb-48">
@@ -176,7 +263,7 @@ export default function ChatWorkspace() {
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-2 rounded-2xl border border-white/[0.08] bg-white/[0.04] p-2 shadow-[0_16px_50px_rgba(0,0,0,0.18)] backdrop-blur-xl sm:flex-row sm:items-center">
           <button
             type="button"
-            onClick={createConversation}
+            onClick={handleCreateConversation}
             className="inline-flex h-[42px] shrink-0 items-center justify-center gap-2 rounded-xl bg-white px-4 text-sm font-semibold text-black transition hover:bg-gray-200"
           >
             <PlusIcon className="h-4 w-4" />
@@ -188,7 +275,7 @@ export default function ChatWorkspace() {
               options={conversationOptions}
               onChange={(value) => {
                 if (value === '__new__') {
-                  createConversation()
+                  handleCreateConversation()
                   return
                 }
                 setActiveConversationId(String(value))
@@ -231,7 +318,7 @@ export default function ChatWorkspace() {
             <button type="button" onClick={copyLastAssistant} className="flex h-[42px] w-[42px] items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.04] text-gray-400 transition hover:bg-white/[0.08] hover:text-white" aria-label="复制最后回复">
               <CopyIcon className="h-4 w-4" />
             </button>
-            <button type="button" onClick={clearActiveConversation} className="flex h-[42px] w-[42px] items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.04] text-gray-400 transition hover:bg-white/[0.08] hover:text-white" aria-label="清空对话">
+            <button type="button" onClick={handleClearConversation} className="flex h-[42px] w-[42px] items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.04] text-gray-400 transition hover:bg-white/[0.08] hover:text-white" aria-label="清空对话">
               <TrashIcon className="h-4 w-4" />
             </button>
           </div>
@@ -259,12 +346,30 @@ export default function ChatWorkspace() {
           ) : (
             <div className="space-y-5 py-8">
                 {messages.map((message) => (
-                  <div key={message.id} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div key={message.id} className={`group flex flex-col ${message.role === 'user' ? 'items-end' : 'items-start'}`}>
                     <div className={`max-w-[min(760px,92%)] rounded-2xl px-4 py-3 text-sm leading-relaxed ${message.role === 'user' ? 'bg-white text-black' : message.error ? 'border border-red-500/25 bg-red-500/10 text-red-200' : 'bg-white/[0.06] text-gray-100'}`}>
+                      {message.imageIds?.length ? (
+                        <div className="mb-3 flex max-w-full flex-wrap gap-2">
+                          {message.imageIds.map((imageId) => (
+                            <ChatImageThumb key={imageId} imageId={imageId} onClick={() => setLightboxImageId(imageId, message.imageIds)} />
+                          ))}
+                        </div>
+                      ) : null}
                       {message.role === 'assistant'
                         ? <MarkdownRenderer content={message.content || (status === 'streaming' ? '正在思考…' : '')} streaming={status === 'streaming'} />
                         : <div className="whitespace-pre-wrap">{message.content}</div>}
                     </div>
+                    {message.content.trim() && (
+                      <button
+                        type="button"
+                        onClick={() => void copyMessage(message.content, message.role === 'assistant' ? '回复已复制' : '问题已复制')}
+                        className="mt-1 flex h-7 w-7 items-center justify-center rounded-md text-gray-500 opacity-70 transition hover:bg-white/[0.06] hover:text-gray-300 focus:opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
+                        aria-label={message.role === 'assistant' ? '复制回复' : '复制问题'}
+                        title={message.role === 'assistant' ? '复制回复' : '复制问题'}
+                      >
+                        <CopyIcon className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                   </div>
                 ))}
                 <div ref={endRef} />
@@ -275,6 +380,39 @@ export default function ChatWorkspace() {
 
       <div className="fixed inset-x-0 bottom-0 z-20 px-3 pb-4 sm:px-4">
         <div className="safe-area-x mx-auto max-w-3xl rounded-[1.75rem] border border-white/[0.08] bg-[#0d0d0d]/95 p-3 shadow-2xl backdrop-blur">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            onChange={(event) => {
+              void handleReferenceUpload(event.target.files)
+              event.target.value = ''
+            }}
+          />
+          {referenceImages.length > 0 && (
+            <div className="mb-2 flex gap-2 overflow-x-auto px-1 pb-1">
+              {referenceImages.map((image, index) => (
+                <div key={image.id} className="relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-white/[0.1] bg-white/[0.04]">
+                  <img
+                    src={image.dataUrl}
+                    alt={`参考图 ${index + 1}`}
+                    className="h-full w-full cursor-zoom-in object-cover"
+                    onClick={() => setLightboxImageId(image.id, referenceImages.map((item) => item.id))}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeReferenceImage(index)}
+                    className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/70 text-white transition hover:bg-red-500"
+                    aria-label={`移除参考图 ${index + 1}`}
+                  >
+                    <CloseIcon className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           <textarea
             value={input}
             onChange={(event) => setInput(event.target.value)}
@@ -285,11 +423,21 @@ export default function ChatWorkspace() {
               }
             }}
             rows={3}
-            placeholder="输入问题，Ctrl + Enter 发送…"
+            placeholder={referenceImages.length ? '描述你想针对参考图询问的问题…' : '输入问题，Ctrl + Enter 发送…'}
             className="w-full resize-none bg-transparent px-2 py-1.5 text-sm text-gray-100 outline-none placeholder:text-gray-500"
           />
           <div className="mt-2 flex items-center justify-between gap-2 px-1">
             <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={referenceImages.length >= MAX_CHAT_REFERENCE_IMAGES || status === 'streaming'}
+                className="inline-flex items-center gap-1.5 rounded-full bg-white/[0.07] px-3 py-1.5 text-xs text-gray-300 transition hover:bg-white/[0.12] hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                title="上传参考图"
+              >
+                <PlusIcon className="h-3.5 w-3.5" />
+                参考图
+              </button>
               {QUICK_PROMPTS.slice(0, 3).map((prompt) => (
                 <button key={prompt} type="button" onClick={() => setInput(prompt)} className="hidden rounded-full bg-white/[0.05] px-3 py-1.5 text-xs text-gray-400 transition hover:bg-white/[0.08] hover:text-white sm:inline-flex">
                   {prompt}
@@ -301,7 +449,7 @@ export default function ChatWorkspace() {
                 停止
               </button>
             ) : (
-              <button type="button" onClick={() => void submit()} disabled={!input.trim()} className="rounded-full bg-white px-5 py-2 text-sm font-semibold text-black transition hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-40">
+              <button type="button" onClick={() => void submit()} disabled={!input.trim() && referenceImages.length === 0} className="rounded-full bg-white px-5 py-2 text-sm font-semibold text-black transition hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-40">
                 发送
               </button>
             )}

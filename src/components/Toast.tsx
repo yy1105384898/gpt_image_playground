@@ -36,7 +36,11 @@ export default function Toast() {
 
   return (
     <div className="fixed bottom-24 left-1/2 z-[120] pointer-events-none toast-enter">
-      <div className="flex items-center gap-2.5 w-max max-w-[calc(100vw-32px)] sm:max-w-[min(44rem,80vw)] px-5 py-3.5 bg-white/95 dark:bg-gray-900/95 backdrop-blur-xl border border-gray-200/60 dark:border-white/[0.08] rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.3)] ring-1 ring-black/5 dark:ring-white/10 text-sm font-medium text-gray-700 dark:text-gray-300">
+      <div className={`flex items-center gap-2.5 w-max max-w-[calc(100vw-32px)] sm:max-w-[min(44rem,80vw)] px-5 py-3.5 backdrop-blur-xl border rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.3)] ring-1 text-sm font-medium ${
+        toast.type === 'error'
+          ? 'border-red-300/70 bg-red-50/95 text-red-700 ring-red-500/10 dark:border-red-400/30 dark:bg-red-950/95 dark:text-red-200 dark:ring-red-400/10'
+          : 'border-gray-200/60 bg-white/95 text-gray-700 ring-black/5 dark:border-white/[0.08] dark:bg-gray-900/95 dark:text-gray-300 dark:ring-white/10'
+      }`}>
         <span className="flex-shrink-0">{getIcon()}</span>
         <span className="leading-5 whitespace-pre-line text-center">{toast.message}</span>
       </div>

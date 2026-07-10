@@ -318,7 +318,6 @@ export default function TaskCard({
   const showN = !isAgentTask && (task.params.n > 1 || nDisplay.isMismatch)
   const outputErrorCount = task.outputErrors?.length ?? 0
   const outputSuccessCount = task.outputImages?.length ?? 0
-  const requestedOutputCount = Math.max(task.params.n, outputSuccessCount + outputErrorCount)
   const hasPartialOutputFailure = task.status === 'done' && outputErrorCount > 0
 
   const showModel = Boolean(task.apiModel?.trim())
@@ -477,6 +476,11 @@ export default function TaskCard({
               <span className={`text-xs text-center leading-tight ${isInterrupted ? 'text-yellow-500' : 'text-red-400'}`}>
                 {isInterrupted ? '已停止' : '失败'}
               </span>
+              {!isInterrupted && task.error && (
+                <span className="line-clamp-2 max-w-[8rem] text-center text-[10px] leading-4 text-red-400/85" title={task.error}>
+                  {task.error}
+                </span>
+              )}
             </div>
           )}
           {task.status === 'done' && thumbSrc && (
@@ -491,7 +495,7 @@ export default function TaskCard({
               />
               {(hasPartialOutputFailure || task.outputImages.length > 1) && (
                 <span className="absolute bottom-1 right-1 bg-black/60 text-white text-xs px-1.5 py-0.5 rounded">
-                  {hasPartialOutputFailure ? <>{requestedOutputCount} | <span className="font-semibold text-yellow-300">{outputSuccessCount}</span></> : task.outputImages.length}
+                  {hasPartialOutputFailure ? <><span className="font-semibold text-green-300">{outputSuccessCount} 成功</span> · <span className="font-semibold text-yellow-300">{outputErrorCount} 失败</span></> : task.outputImages.length}
                 </span>
               )}
             </>

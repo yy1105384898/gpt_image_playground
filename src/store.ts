@@ -60,6 +60,7 @@ import { createTransparentOutputMeta, getTransparentRequestParams, removeKeyedBa
 import { blobToDataUrl, fileToDataUrl } from './lib/dataUrl'
 import { formatExportFileTime } from './lib/exportFileName'
 import { buildExportZip, readExportZip, readExportZipFileAsDataUrl } from './lib/exportZip'
+import { getStoredChatImageIds } from './lib/chatImages'
 
 export const ALL_FAVORITES_COLLECTION_ID = '__all_favorites__'
 export const DEFAULT_FAVORITE_COLLECTION_ID = '__default_favorites__'
@@ -938,6 +939,7 @@ interface AppState {
 }
 
 function isImageReferencedByState(state: AppState, imageId: string) {
+  if (getStoredChatImageIds().has(imageId)) return true
   if (state.inputImages.some((img) => img.id === imageId)) return true
   if (state.galleryInputDraft?.inputImages.some((img) => img.id === imageId)) return true
   if (Object.values(state.agentInputDrafts).some((draft) => draft.inputImages.some((img) => img.id === imageId))) return true
@@ -1745,6 +1747,15 @@ function failOpenAITaskIfStillRunning(taskId: string, error: string, now = Date.
   return true
 }
 
+function notifyImageTaskFailure(taskId: string, error: string, title = '生图失败') {
+  const firstLine = error.split(/\r?\n/)[0]?.trim() || '请查看失败详情'
+  const chars = Array.from(firstLine)
+  const summary = chars.length > 42 ? `${chars.slice(0, 42).join('')}...` : firstLine
+  const state = useStore.getState()
+  state.showToast(`${title} · ${summary}`, 'error')
+  if (state.appMode === 'gallery') state.setDetailTaskId(taskId)
+}
+
 function scheduleOpenAIWatchdog(taskId: string, timeoutSeconds: number, profile?: TimeoutStreamingHintProfile | null) {
   clearOpenAIWatchdogTimer(taskId)
   const task = useStore.getState().tasks.find((item) => item.id === taskId)
@@ -1754,8 +1765,9 @@ function scheduleOpenAIWatchdog(taskId: string, timeoutSeconds: number, profile?
   const remainingMs = Math.max(0, timeoutMs - (Date.now() - task.createdAt))
   const timer = setTimeout(() => {
     openAIWatchdogTimers.delete(taskId)
-    const failed = failOpenAITaskIfStillRunning(taskId, createOpenAITimeoutError(timeoutSeconds, profile))
-    if (failed) useStore.getState().showToast('OpenAI 任务请求超时', 'error')
+    const error = createOpenAITimeoutError(timeoutSeconds, profile)
+    const failed = failOpenAITaskIfStillRunning(taskId, error)
+    if (failed) notifyImageTaskFailure(taskId, error)
   }, remainingMs)
   openAIWatchdogTimers.set(taskId, timer)
 }
@@ -2177,6 +2189,8 @@ async function recoverFalTask(taskId: string) {
       finishedAt: Date.now(),
       elapsed: Date.now() - task.createdAt,
     })
+    const failedTask = useStore.getState().tasks.find((item) => item.id === taskId)
+    if (failedTask?.error) notifyImageTaskFailure(taskId, failedTask.error)
     if (isAgentTask(task)) void continueRecoveredAgentRound(taskId)
   }
 }
@@ -2259,6 +2273,7 @@ export async function initStore() {
   const galleryInputDraft = state.galleryInputDraft
   const agentConversations = state.agentConversations
   const agentInputDrafts = state.agentInputDrafts
+  for (const id of getStoredChatImageIds()) referencedIds.add(id)
   for (const img of persistedInputImages) referencedIds.add(img.id)
   if (galleryInputDraft) {
     for (const img of galleryInputDraft.inputImages) referencedIds.add(img.id)
@@ -4141,7 +4156,9 @@ async function executeAgentRound(
           actualParams: result.actualParamsList?.[0] ?? result.actualParams,
           revisedPrompt: result.revisedPrompts?.[0] ?? opts.prompt,
         } satisfies AgentApiResultImage : null,
-        error: result.failedRequests?.[0]?.error ?? (dataUrl ? null : '接口未返回图片数据'),
+        error: result.failedRequests?.[0]?.error
+          ? translateImageErrorMessage(result.failedRequests[0].error)
+          : dataUrl ? null : '接口未返回图片数据',
         rawResponsePayload: JSON.stringify({
           imageCount: result.images.length,
           actualParams: result.actualParams,
@@ -4853,10 +4870,14 @@ async function executeTask(taskId: string) {
     const partialImageIdsToClean = latestBeforeUpdate.streamPartialImageIds || []
     clearOpenAIWatchdogTimer(taskId)
     useStore.getState().setTaskStreamPreview(taskId)
+    const outputErrors = result.failedRequests?.map((item) => ({
+      ...item,
+      error: translateImageErrorMessage(item.error),
+    }))
     updateTaskInStore(taskId, {
       outputImages: outputIds,
       transparentOriginalImages: transparentOriginalImageIds,
-      outputErrors: result.failedRequests?.length ? result.failedRequests : undefined,
+      outputErrors: outputErrors?.length ? outputErrors : undefined,
       streamPartialImageIds: undefined,
       rawImageUrls: result.rawImageUrls?.length ? result.rawImageUrls : undefined,
       actualParams,
@@ -4870,11 +4891,15 @@ async function executeTask(taskId: string) {
     })
     void deleteUnreferencedImageIds(partialImageIdsToClean)
 
-    const failedCount = result.failedRequests?.length ?? 0
+    const failedCount = outputErrors?.length ?? 0
     const completionMessage = failedCount > 0
       ? `生成完成：成功 ${outputIds.length} 张，失败 ${failedCount} 张`
       : `生成完成，共 ${outputIds.length} 张图片`
-    useStore.getState().showToast(completionMessage, failedCount > 0 ? 'error' : 'success')
+    if (failedCount > 0) {
+      notifyImageTaskFailure(taskId, outputErrors?.[0]?.error ?? completionMessage, '部分生图失败')
+    } else {
+      useStore.getState().showToast(completionMessage, 'success')
+    }
     if (!isAgentTask(task)) showTaskCompletionNotification('图像生成完成', `${completionMessage}。`)
     const currentMask = useStore.getState().maskDraft
     if (
@@ -4940,7 +4965,7 @@ async function executeTask(taskId: string) {
         finishedAt: Date.now(),
         elapsed: Date.now() - task.createdAt,
       })
-      useStore.getState().setDetailTaskId(taskId)
+      notifyImageTaskFailure(taskId, errorMessage)
     }
   } finally {
     // 释放输入图片的内存缓存（已持久化到 IndexedDB，后续按需从 DB 加载）
@@ -5459,14 +5484,16 @@ async function recoverCustomTask(taskId: string) {
     await completeRecoveredCustomTask(task, result)
   } catch (err) {
     clearCustomRecoveryTimer(taskId)
+    const errorMessage = translateImageErrorMessage(err instanceof Error ? err.message : String(err))
     updateTaskInStore(taskId, {
       status: 'error',
-      error: translateImageErrorMessage(err instanceof Error ? err.message : String(err)),
+      error: errorMessage,
       ...getRawErrorPayload(err),
       customRecoverable: false,
       finishedAt: Date.now(),
       elapsed: Date.now() - task.createdAt,
     })
+    notifyImageTaskFailure(taskId, errorMessage)
     if (isAgentTask(task)) void continueRecoveredAgentRound(taskId)
   }
 }

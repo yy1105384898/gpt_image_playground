@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { CHAT_STORE_STORAGE_KEY } from './lib/chatImages'
 
 export type ChatRole = 'user' | 'assistant'
 export type ChatStatus = 'idle' | 'streaming' | 'error'
@@ -10,6 +11,7 @@ export interface ChatMessage {
   content: string
   createdAt: number
   error?: string
+  imageIds?: string[]
 }
 
 export interface ChatConversation {
@@ -155,7 +157,7 @@ export const useChatStore = create<ChatState>()(
       setStatus: (status) => set({ status }),
     }),
     {
-      name: 'yy-text-chat-store',
+      name: CHAT_STORE_STORAGE_KEY,
       partialize: (state) => ({
         activeConversationId: state.activeConversationId,
         conversations: state.conversations.slice(0, 40).map((conversation) => ({
@@ -168,11 +170,12 @@ export const useChatStore = create<ChatState>()(
   ),
 )
 
-export function createChatMessage(role: ChatRole, content: string): ChatMessage {
+export function createChatMessage(role: ChatRole, content: string, imageIds?: string[]): ChatMessage {
   return {
     id: newId(role),
     role,
     content,
     createdAt: Date.now(),
+    ...(imageIds?.length ? { imageIds } : {}),
   }
 }
