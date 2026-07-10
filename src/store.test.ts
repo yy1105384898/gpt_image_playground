@@ -1157,13 +1157,13 @@ describe('fal task recovery', () => {
 
     expect(callAgentResponsesApi).not.toHaveBeenCalled()
     const failedTask = useStore.getState().tasks.find((item) => item.id === agentTask.id)
-    expect(failedTask).toMatchObject({ status: 'error', error: 'quota exceeded', falRecoverable: false })
+    expect(failedTask).toMatchObject({ status: 'error', error: '账户额度不足，请充值或更换 API 密钥', falRecoverable: false })
     const round = useStore.getState().agentConversations[0].rounds[0]
-    expect(round).toMatchObject({ status: 'error', error: 'quota exceeded' })
+    expect(round).toMatchObject({ status: 'error', error: '账户额度不足，请充值或更换 API 密钥' })
     const toolOutput = round.responseOutput?.find((item) => item.type === 'function_call_output')
     expect(toolOutput).toMatchObject({ call_id: 'tool-a' })
     expect(toolOutput?.output).toContain('"status":"error"')
-    expect(toolOutput?.output).toContain('quota exceeded')
+    expect(toolOutput?.output).toContain('账户额度不足，请充值或更换 API 密钥')
   })
 
   it('does not call Agent again when recovered tasks already reached the tool limit', async () => {

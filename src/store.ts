@@ -45,7 +45,7 @@ import { callImageApi } from './lib/api'
 import { callAgentConversationTitleApi, callAgentResponsesApi, callBatchImageSingle, parseBatchImageCallArguments, type AgentApiResultImage } from './lib/agentApi'
 import { collectAgentRoundOutputImageSlots, extractAgentReferenceIds, getAgentCurrentReferenceId, getAgentGeneratedImageReferenceId, replaceAgentPromptImageReferencesForApi } from './lib/agentImageReferences'
 import { showBrowserNotification } from './lib/browserNotification'
-import { IMAGE_FETCH_CORS_HINT } from './lib/imageApiShared'
+import { IMAGE_FETCH_CORS_HINT, translateImageErrorMessage } from './lib/imageApiShared'
 import { getPlaygroundApiChannelTarget } from './lib/devProxy'
 import { getPlaygroundModelChannelApiKey, getPlaygroundModelChannelModels, resolvePlaygroundModelChannelTarget } from './lib/playgroundChannels'
 import { getStoredPlaygroundPurposeConfig } from './lib/playgroundPurposeConfig'
@@ -2171,7 +2171,7 @@ async function recoverFalTask(taskId: string) {
     clearFalRecoveryTimer(taskId)
     updateTaskInStore(taskId, {
       status: 'error',
-      error: getFalErrorMessage(err) ?? (err instanceof Error ? err.message : String(err)),
+      error: translateImageErrorMessage(getFalErrorMessage(err) ?? (err instanceof Error ? err.message : String(err))),
       ...getRawErrorPayload(err),
       falRecoverable: false,
       finishedAt: Date.now(),
@@ -4916,7 +4916,7 @@ async function executeTask(taskId: string) {
       })
       scheduleCustomRecovery(taskId)
     } else {
-      let errorMessage = err instanceof Error ? err.message : String(err)
+      let errorMessage = translateImageErrorMessage(err instanceof Error ? err.message : String(err))
       const settings = useStore.getState().settings
       const profile = getTaskApiProfile(settings, latestTask)
       const usesApiProxy = profile?.apiProxy ?? settings.apiProxy
@@ -5461,7 +5461,7 @@ async function recoverCustomTask(taskId: string) {
     clearCustomRecoveryTimer(taskId)
     updateTaskInStore(taskId, {
       status: 'error',
-      error: err instanceof Error ? err.message : String(err),
+      error: translateImageErrorMessage(err instanceof Error ? err.message : String(err)),
       ...getRawErrorPayload(err),
       customRecoverable: false,
       finishedAt: Date.now(),

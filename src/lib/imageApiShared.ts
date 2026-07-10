@@ -174,6 +174,45 @@ export async function getApiErrorMessage(response: Response): Promise<string> {
   return errorMsg
 }
 
+export function translateImageErrorMessage(message: string): string {
+  const source = message.trim()
+  if (!source) return '图片生成失败，请稍后重试。'
+  if (/[\u4e00-\u9fff]/.test(source)) return source
+
+  const status = source.match(/(?:\bHTTP\s*|\bstatus(?:\s+code)?\s*[:=]?\s*|\berror code\s*[:=]?\s*)([1-5]\d{2})\b/i)?.[1]
+  const suffix = status ? `（HTTP ${status}）` : ''
+  const lower = source.toLowerCase()
+
+  if (/invalid[_ -]?api[_ -]?key|incorrect api key|invalid authentication|authentication failed|api key.*invalid/.test(lower)) {
+    return `API 密钥无效或已过期${suffix}`
+  }
+  if (/unauthorized|\b401\b/.test(lower)) return `API 密钥无效或当前密钥没有访问权限${suffix}`
+  if (/forbidden|\b403\b/.test(lower)) return `当前 API 密钥没有访问此渠道或模型的权限${suffix}`
+  if (/insufficient[_ -]?quota|quota exceeded|billing.*(?:limit|hard limit)|balance.*(?:insufficient|not enough)|credit.*(?:insufficient|not enough)/.test(lower)) {
+    return `账户额度不足，请充值或更换 API 密钥${suffix}`
+  }
+  if (/rate[_ -]?limit|too many requests|\b429\b/.test(lower)) return `请求过于频繁，请稍后再试；如持续出现请检查额度${suffix}`
+  if (/content[_ -]?(?:policy|filter)|safety|moderation|responsible ai|rejected.*(?:content|prompt)/.test(lower)) {
+    return `提示词或图片触发了内容安全策略，请调整后重试${suffix}`
+  }
+  if (/model[_ -]?not[_ -]?found|model.*(?:does not exist|not found|unavailable)|unknown model|unsupported model/.test(lower)) {
+    return `当前渠道不支持该生图模型，或模型已不存在${suffix}`
+  }
+  if (/not found|\b404\b/.test(lower)) return `接口地址或生图模型不存在，请检查渠道配置${suffix}`
+  if (/context[_ -]?length|prompt.*(?:too long|maximum)|input.*(?:too long|maximum)/.test(lower)) {
+    return `提示词或输入图片过大，请缩短提示词或减少图片后重试${suffix}`
+  }
+  if (/invalid[_ -]?request|bad request|\b400\b|validation error|unprocessable entity|\b422\b/.test(lower)) {
+    return `请求参数不符合当前生图模型要求，请检查尺寸、格式或输入图片${suffix}`
+  }
+  if (/timeout|timed out|deadline exceeded|\b504\b/.test(lower)) return `图片生成请求超时，请稍后重试或降低图片尺寸/质量${suffix}`
+  if (/failed to fetch|networkerror|network request failed|load failed|cors|\b502\b|\b503\b|\b500\b/.test(lower)) {
+    return `无法连接上游生图服务，请检查渠道地址、网络或稍后重试${suffix}`
+  }
+
+  return `图片生成失败：${source}`
+}
+
 export function pickActualParams(source: unknown): Partial<TaskParams> {
   if (!source || typeof source !== 'object') return {}
   const record = source as Record<string, unknown>
