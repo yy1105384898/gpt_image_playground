@@ -9,6 +9,7 @@ import { getModelGroups } from '../lib/modelCatalog'
 import { getStoredPlaygroundPurposeConfig, savePlaygroundPurposeConfig } from '../lib/playgroundPurposeConfig'
 import { normalizeSettings } from '../lib/apiProfiles'
 import { getPlaygroundModelChannelApiKey, resolvePlaygroundModelChannelTarget } from '../lib/playgroundChannels'
+import { isModelForPurpose } from '../lib/modelPurpose'
 import ModelSelect from './ModelSelect'
 import MarkdownRenderer from './MarkdownRenderer'
 import Select from './Select'
@@ -46,8 +47,6 @@ function getTextProfile() {
   const settings = normalizeSettings(useStore.getState().settings)
   return settings.profiles.find((profile) => profile.id === TEXT_PROFILE_ID)
     ?? settings.profiles.find((profile) => profile.provider === 'openai' && profile.apiMode === 'responses')
-    ?? settings.profiles.find((profile) => profile.id === settings.activeProfileId)
-    ?? settings.profiles[0]
 }
 
 function getActiveConversation(conversations: ChatConversation[], activeId: string | null, model: string) {
@@ -80,8 +79,6 @@ export default function ChatWorkspace() {
   const settingsTextProfile = useMemo(() => (
     settings.profiles.find((profile) => profile.id === TEXT_PROFILE_ID)
       ?? settings.profiles.find((profile) => profile.provider === 'openai' && profile.apiMode === 'responses')
-      ?? settings.profiles.find((profile) => profile.id === settings.activeProfileId)
-      ?? settings.profiles[0]
   ), [settings])
   const abortRef = useRef<AbortController | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
@@ -94,9 +91,12 @@ export default function ChatWorkspace() {
 
   useEffect(() => {
     const nextModel = settingsTextProfile?.model?.trim()
-    if (!nextModel) return
-    setModel(nextModel, getPlaygroundApiChannelTarget('text'))
-  }, [settingsTextProfile?.model, setModel])
+    const safeModel = nextModel && isModelForPurpose(nextModel, 'text')
+      ? nextModel
+      : isModelForPurpose(model, 'text') ? model : DEFAULT_CHAT_MODEL
+    if (safeModel === model && activeConversation?.model === safeModel) return
+    setModel(safeModel, getPlaygroundApiChannelTarget('text'))
+  }, [activeConversation?.model, model, settingsTextProfile?.model, setModel])
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: 'end' })
@@ -297,16 +297,24 @@ export default function ChatWorkspace() {
                 if (target) savePlaygroundPurposeConfig(target, 'text', { apiKey, model: nextModel })
                 if (target) {
                   const state = useStore.getState()
-                  const profileId = state.settings.profiles.some((profile) => profile.id === TEXT_PROFILE_ID)
-                    ? TEXT_PROFILE_ID
-                    : getTextProfile()?.id
-                  state.setSettings({
-                    profiles: state.settings.profiles.map((profile) =>
-                      profile.id === profileId
-                        ? { ...profile, model: nextModel, baseUrl: resolvePlaygroundModelChannelTarget(target), apiKey: apiKey ?? profile.apiKey }
-                        : profile,
-                    ),
-                  })
+                  const existingTextProfile = getTextProfile()
+                  const fallbackProfile = state.settings.profiles.find((profile) => profile.provider === 'openai') ?? state.settings.profiles[0]
+                  const textProfile = existingTextProfile ?? (fallbackProfile ? {
+                    ...fallbackProfile,
+                    id: TEXT_PROFILE_ID,
+                    name: '对话',
+                    provider: 'openai' as const,
+                    apiMode: 'responses' as const,
+                    codexCli: false,
+                    streamImages: false,
+                  } : null)
+                  if (textProfile) {
+                    const updatedTextProfile = { ...textProfile, model: nextModel, baseUrl: resolvePlaygroundModelChannelTarget(target), apiKey }
+                    const profiles = existingTextProfile
+                      ? state.settings.profiles.map((profile) => profile.id === textProfile.id ? updatedTextProfile : profile)
+                      : [...state.settings.profiles, updatedTextProfile]
+                    state.setSettings({ profiles })
+                  }
                 }
                 setModel(nextModel, target)
               }}
