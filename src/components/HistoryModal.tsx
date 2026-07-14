@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from 'react'
-import { getAgentConversationTaskIds, removeMultipleTasks, useStore } from '../store'
+import { removeMultipleTasks, useStore } from '../store'
 import type { AgentConversation } from '../types'
+import { getAgentConversationTaskIds } from '../lib/agentConversationState'
 import { useTooltip } from '../hooks/useTooltip'
 import { CloseIcon, EditIcon, TrashIcon } from './icons'
 import ViewportTooltip from './ViewportTooltip'
