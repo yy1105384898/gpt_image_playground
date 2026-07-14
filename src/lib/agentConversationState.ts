@@ -63,11 +63,23 @@ function normalizeAgentMessage(value: unknown): AgentMessage | null {
 export function normalizeAgentConversations(value: unknown): AgentConversation[] {
   if (!Array.isArray(value)) return []
 
+  const conversationIds = new Set<string>()
   return value
-    .filter((item): item is AgentConversation => Boolean(item) && typeof item === 'object' && typeof (item as AgentConversation).id === 'string')
+    .filter((item): item is AgentConversation => {
+      if (!item || typeof item !== 'object') return false
+      const id = (item as AgentConversation).id
+      if (typeof id !== 'string' || !id || conversationIds.has(id)) return false
+      conversationIds.add(id)
+      return true
+    })
     .map((conversation) => {
+      const roundIds = new Set<string>()
       const normalizedRounds = Array.isArray(conversation.rounds)
-        ? conversation.rounds.map(normalizeAgentRound).filter((round): round is AgentRound => Boolean(round))
+        ? conversation.rounds.map(normalizeAgentRound).filter((round): round is AgentRound => {
+            if (!round || roundIds.has(round.id)) return false
+            roundIds.add(round.id)
+            return true
+          })
         : []
       const hasBranchParents = normalizedRounds.some((round) => round.parentRoundId)
       const hasStoredActiveRound = typeof conversation.activeRoundId === 'string'
@@ -77,11 +89,15 @@ export function normalizeAgentConversations(value: unknown): AgentConversation[]
             ...round,
             parentRoundId: index > 0 ? normalizedRounds[index - 1].id : null,
           }))
-      const roundIds = new Set(rounds.map((round) => round.id))
+      const messageIds = new Set<string>()
       const messages = Array.isArray(conversation.messages)
         ? conversation.messages
             .map(normalizeAgentMessage)
-            .filter((message): message is AgentMessage => message != null && roundIds.has(message.roundId))
+            .filter((message): message is AgentMessage => {
+              if (!message || !roundIds.has(message.roundId) || messageIds.has(message.id)) return false
+              messageIds.add(message.id)
+              return true
+            })
         : []
       return {
         id: conversation.id,
@@ -95,11 +111,11 @@ export function normalizeAgentConversations(value: unknown): AgentConversation[]
     })
 }
 
-export function getAgentRoundChildren(conversation: AgentConversation, parentRoundId: string | null) {
+function getAgentRoundChildren(conversation: AgentConversation, parentRoundId: string | null) {
   return conversation.rounds.filter((round) => (round.parentRoundId ?? null) === parentRoundId)
 }
 
-export function getLatestAgentLeafId(conversation: AgentConversation, startRoundId: string | null = null): string | null {
+function getLatestAgentLeafId(conversation: AgentConversation, startRoundId: string | null = null): string | null {
   let currentId = startRoundId
   if (!currentId) {
     const roots = getAgentRoundChildren(conversation, null)
@@ -141,7 +157,7 @@ export function getActiveAgentRounds(conversation: AgentConversation): AgentRoun
   return getAgentRoundPath(conversation, activeRoundId ?? null)
 }
 
-export function reindexAgentRounds(conversation: AgentConversation): AgentConversation {
+function reindexAgentRounds(conversation: AgentConversation): AgentConversation {
   const indexById = new Map<string, number>()
   const seen = new Set<string>()
   const visit = (parentRoundId: string | null, depth: number) => {
@@ -241,4 +257,12 @@ export function getAgentConversationTaskIds(conversation: AgentConversation | nu
       .filter((task) => task.agentConversationId === conversation.id || Boolean(task.agentRoundId && roundIds.has(task.agentRoundId)))
       .map((task) => task.id),
   ]).filter((taskId) => existingTaskIds.has(taskId))
+}
+
+export function getConversationSearchText(conversation: AgentConversation) {
+  return [
+    conversation.title,
+    ...conversation.messages.map((message) => message.content),
+    ...conversation.rounds.map((round) => round.prompt),
+  ].join('\n').toLocaleLowerCase()
 }

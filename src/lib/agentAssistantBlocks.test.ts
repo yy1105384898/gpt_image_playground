@@ -1,11 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import type { AgentConversation, AgentRound, TaskRecord } from '../types'
+import type { AgentRound, TaskRecord } from '../types'
 import { DEFAULT_PARAMS } from '../types'
 import {
   getAgentAssistantBlocks,
   getAgentAssistantCopyContent,
-  getConversationSearchText,
-  getRoundTasks,
   getRoundTaskSlots,
   type AgentAssistantBlock,
 } from './agentAssistantBlocks'
@@ -42,6 +40,22 @@ const task = (id: string, patch: Partial<TaskRecord> = {}): TaskRecord => ({
   ...(patch.agentBatchCallId ? { agentBatchCallId: patch.agentBatchCallId } : {}),
 })
 
+const blockOrder = (blocks: AgentAssistantBlock[]) => blocks.map((block) => {
+  if (block.type === 'text') return `text:${block.content}`
+  if (block.type === 'image-task') return `image:${block.task.id}`
+  if (block.type === 'deleted-image-task') return `deleted:${block.taskId}`
+  return block.type
+})
+
+const batchCall = (callId: string, count: number) => ({
+  type: 'function_call',
+  name: 'generate_image_batch',
+  call_id: callId,
+  arguments: JSON.stringify({
+    images: Array.from({ length: count }, (_, index) => ({ id: `image-${index + 1}`, prompt: `prompt-${index + 1}` })),
+  }),
+})
+
 describe('agent assistant blocks', () => {
   it('preserves response output order', () => {
     const imageTask = task('task-1', { agentToolCallId: 'image-1' })
@@ -70,28 +84,168 @@ describe('agent assistant blocks', () => {
       { taskId: 'task-deleted', task: null },
       { taskId: liveTask.id, task: liveTask },
     ])
-    expect(getRoundTasks(currentRound, [liveTask])).toEqual([null, liveTask])
-    expect(getAgentAssistantBlocks(currentRound, slots, [liveTask], true).map((block) => block.key)).toEqual([
-      'text:fallback',
-      'deleted-image:task-deleted',
-      'image:task-live',
+    expect(getAgentAssistantBlocks(currentRound, slots, [liveTask], true).map((block) =>
+      block.type === 'image-task' ? block.task.id : block.type === 'deleted-image-task' ? block.taskId : block.type,
+    )).toEqual(['text', 'task-deleted', 'task-live'])
+  })
+
+  it('keeps a deleted generate_image task between surrounding text', () => {
+    const currentRound = round({
+      outputTaskIds: ['task-deleted'],
+      responseOutput: [
+        { type: 'message', id: 'message-before', content: [{ text: '生成前' }] },
+        { type: 'function_call', name: 'generate_image', call_id: 'image-call-1', arguments: '{}' },
+        { type: 'function_call_output', call_id: 'image-call-1', output: '{}' },
+        { type: 'message', id: 'message-after', content: [{ text: '生成后' }] },
+      ],
+    })
+
+    const blocks = getAgentAssistantBlocks(currentRound, getRoundTaskSlots(currentRound, []), [], true)
+
+    expect(blocks.map((block) => block.type)).toEqual(['text', 'deleted-image-task', 'text'])
+    expect(blocks.filter((block) => block.type === 'text').map((block) => block.content)).toEqual(['生成前', '生成后'])
+    expect(blocks.find((block) => block.type === 'deleted-image-task')).toMatchObject({ taskId: 'task-deleted' })
+  })
+
+  it('groups consecutive searches and gives every rendered block a stable unique key', () => {
+    const currentRound = round({
+      responseOutput: [
+        { type: 'web_search_call', id: 'search-1', status: 'completed', action: { type: 'search' } },
+        { type: 'web_search_call', id: 'search-2', status: 'completed', action: { type: 'open_page' } },
+        { type: 'message', id: 'duplicate-id', content: [{ text: '中间文本' }] },
+        { type: 'web_search_call', id: 'search-3', status: 'completed', action: { type: 'search' } },
+        { type: 'message', id: 'duplicate-id', content: [{ text: '末尾文本' }] },
+      ],
+    })
+
+    const blocks = getAgentAssistantBlocks(currentRound, [], [], true)
+    const keys = blocks.map((block) => block.key)
+
+    expect(blocks.map((block) => block.type)).toEqual(['web-search', 'text', 'web-search', 'text'])
+    expect(new Set(keys).size).toBe(keys.length)
+    expect(getAgentAssistantBlocks(currentRound, [], [], true).map((block) => block.key)).toEqual(keys)
+  })
+
+  it('appends unmatched tasks and de-duplicates repeated calls and task slots', () => {
+    const matchedTask = task('task-matched', { agentToolCallId: 'image-call-1' })
+    const unmatchedTask = task('task-unmatched', { agentToolCallId: 'missing-call' })
+    const currentRound = round({
+      outputTaskIds: [matchedTask.id, matchedTask.id, unmatchedTask.id],
+      responseOutput: [
+        { type: 'function_call', name: 'generate_image', call_id: 'image-call-1', arguments: '{}' },
+        { type: 'function_call', name: 'generate_image', call_id: 'image-call-1', arguments: '{}' },
+        { type: 'message', content: [{ text: '完成' }] },
+      ],
+    })
+    const tasks = [matchedTask, unmatchedTask]
+
+    const blocks = getAgentAssistantBlocks(currentRound, getRoundTaskSlots(currentRound, tasks), tasks, true)
+
+    expect(blocks.map((block) => block.type === 'image-task' ? block.task.id : block.type)).toEqual([
+      matchedTask.id,
+      'text',
+      unmatchedTask.id,
     ])
   })
 
-  it('projects batch tasks in round slot order', () => {
-    const firstTask = task('task-first', { agentBatchCallId: 'batch-1' })
-    const secondTask = task('task-second', { agentBatchCallId: 'batch-1' })
+  it.each([
+    {
+      name: 'deleted then live',
+      taskIds: ['task-deleted', 'task-live'],
+      expected: ['text:生成前', 'deleted:task-deleted', 'image:task-live', 'text:生成后'],
+    },
+    {
+      name: 'live then deleted',
+      taskIds: ['task-live', 'task-deleted'],
+      expected: ['text:生成前', 'image:task-live', 'deleted:task-deleted', 'text:生成后'],
+    },
+  ])('projects partial batch slots in original order: $name', ({ taskIds, expected }) => {
+    const liveTask = task('task-live', { agentBatchCallId: 'batch-1' })
     const currentRound = round({
-      outputTaskIds: [secondTask.id, firstTask.id],
-      responseOutput: [{ type: 'function_call', name: 'generate_image_batch', call_id: 'batch-1' }],
+      outputTaskIds: taskIds,
+      responseOutput: [
+        { type: 'message', content: [{ text: '生成前' }] },
+        batchCall('batch-1', 2),
+        { type: 'message', content: [{ text: '生成后' }] },
+      ],
     })
-    const tasks = [firstTask, secondTask]
 
-    const blocks = getAgentAssistantBlocks(currentRound, getRoundTaskSlots(currentRound, tasks), tasks, false)
+    const blocks = getAgentAssistantBlocks(currentRound, getRoundTaskSlots(currentRound, [liveTask]), [liveTask], true)
 
-    expect(blocks.map((block) => block.type === 'image-task' ? block.task.id : block.type)).toEqual([
-      secondTask.id,
-      firstTask.id,
+    expect(blockOrder(blocks)).toEqual(expected)
+  })
+
+  it('renders an entirely deleted batch at the batch output position', () => {
+    const currentRound = round({
+      outputTaskIds: ['task-deleted-1', 'task-deleted-2'],
+      responseOutput: [
+        { type: 'message', content: [{ text: '生成前' }] },
+        batchCall('batch-1', 2),
+        { type: 'message', content: [{ text: '生成后' }] },
+      ],
+    })
+
+    const blocks = getAgentAssistantBlocks(currentRound, getRoundTaskSlots(currentRound, []), [], true)
+
+    expect(blockOrder(blocks)).toEqual([
+      'text:生成前',
+      'deleted:task-deleted-1',
+      'deleted:task-deleted-2',
+      'text:生成后',
+    ])
+  })
+
+  it('de-duplicates repeated batch calls and task slots', () => {
+    const liveTask = task('task-live', { agentBatchCallId: 'batch-1' })
+    const call = batchCall('batch-1', 2)
+    const currentRound = round({
+      outputTaskIds: ['task-deleted', liveTask.id, 'task-deleted', liveTask.id],
+      responseOutput: [call, call],
+    })
+
+    const blocks = getAgentAssistantBlocks(currentRound, getRoundTaskSlots(currentRound, [liveTask]), [liveTask], false)
+
+    expect(blockOrder(blocks)).toEqual(['deleted:task-deleted', 'image:task-live'])
+  })
+
+  it('places scrubbed built-in image slots around the nearest surviving call', () => {
+    const liveTask = task('task-live', { agentToolCallId: 'image-live' })
+    const currentRound = round({
+      outputTaskIds: ['task-deleted-before', liveTask.id, 'task-deleted-after'],
+      responseOutput: [
+        { type: 'message', content: [{ text: '生成前' }] },
+        { type: 'image_generation_call', id: 'image-live' },
+        { type: 'message', content: [{ text: '生成后' }] },
+      ],
+    })
+
+    const blocks = getAgentAssistantBlocks(currentRound, getRoundTaskSlots(currentRound, [liveTask]), [liveTask], true)
+
+    expect(blockOrder(blocks)).toEqual([
+      'text:生成前',
+      'deleted:task-deleted-before',
+      'image:task-live',
+      'deleted:task-deleted-after',
+      'text:生成后',
+    ])
+  })
+
+  it('appends scrubbed built-in slots in task order when no output anchor remains', () => {
+    const currentRound = round({
+      outputTaskIds: ['task-deleted-1', 'task-deleted-2'],
+      responseOutput: [
+        { type: 'message', content: [{ text: '生成前' }] },
+        { type: 'message', content: [{ text: '生成后' }] },
+      ],
+    })
+
+    const blocks = getAgentAssistantBlocks(currentRound, getRoundTaskSlots(currentRound, []), [], true)
+
+    expect(blockOrder(blocks)).toEqual([
+      'text:生成前',
+      'text:生成后',
+      'deleted:task-deleted-1',
+      'deleted:task-deleted-2',
     ])
   })
 
@@ -126,18 +280,5 @@ describe('agent assistant blocks', () => {
 
     expect(getAgentAssistantCopyContent('回退文本', mixedBlocks)).toBe('第一段\n\n第二段')
     expect(getAgentAssistantCopyContent('保留原始格式', [{ type: 'text', key: 'text:fallback' }])).toBe('保留原始格式')
-  })
-
-  it('builds case-insensitive conversation search text from title, messages, and prompts', () => {
-    const conversation: AgentConversation = {
-      id: 'conversation-1',
-      title: 'Project ALPHA',
-      createdAt: 1,
-      updatedAt: 2,
-      rounds: [round({ prompt: 'Round Prompt' })],
-      messages: [{ id: 'user-1', role: 'user', content: 'Message Body', roundId: 'round-1', createdAt: 1 }],
-    }
-
-    expect(getConversationSearchText(conversation)).toBe('project alpha\nmessage body\nround prompt')
   })
 })
