@@ -1,6 +1,7 @@
 import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_STREAM_PARTIAL_IMAGES, type ApiProfile, type AppSettings, type ResponsesApiResponse, type ResponsesOutputItem, type TaskParams } from '../types'
 import { buildApiUrl, readClientDevProxyConfig, shouldUseApiProxy } from './devProxy'
-import { appendStreamingFormatHint, maybeAppendStreamingHint, getApiErrorMessage, MIME_MAP, normalizeBase64Image, pickActualParams } from './imageApiShared'
+import { appendStreamingFormatHint, getApiErrorMessage, getResponsesImageResultBase64, maybeAppendStreamingHint, MIME_MAP, normalizeBase64Image, pickActualParams } from './imageApiShared'
+import { isEventStreamResponse, readJsonServerSentEvents, throwIfAborted } from './serverSentEvents'
 
 export interface AgentApiResultImage {
   toolCallId?: string
@@ -234,10 +235,6 @@ function createAgentTools(params: TaskParams, profile: ApiProfile, settings: App
   return tools
 }
 
-function isEventStreamResponse(response: Response): boolean {
-  return response.headers.get('Content-Type')?.toLowerCase().includes('text/event-stream') ?? false
-}
-
 function isRecordValue(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
@@ -331,91 +328,6 @@ function getImageToolFailureFromOutputItem(event: Record<string, unknown>, item?
   }
 }
 
-function parseServerSentEventBlock(block: string): string | null {
-  const dataLines: string[] = []
-  for (const line of block.split(/\r?\n/)) {
-    if (!line || line.startsWith(':')) continue
-    if (!line.startsWith('data:')) continue
-    dataLines.push(line.slice(5).replace(/^ /, ''))
-  }
-
-  const data = dataLines.join('\n').trim()
-  if (!data || data === '[DONE]') return null
-  return data
-}
-
-function getAbortedSignal(signals: Array<AbortSignal | undefined>) {
-  return signals.find((signal) => signal?.aborted)
-}
-
-function throwIfAborted(...signals: Array<AbortSignal | undefined>) {
-  const signal = getAbortedSignal(signals)
-  if (!signal) return
-  throw signal.reason instanceof Error ? signal.reason : new DOMException('请求已停止', 'AbortError')
-}
-
-async function readJsonServerSentEvents(response: Response, onEvent: (event: Record<string, unknown>) => void | Promise<void>, signals: Array<AbortSignal | undefined> = []): Promise<void> {
-  if (!response.body) throw new Error('接口未返回可读取的流式响应')
-
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  let hasDataLine = false
-  const cancelReader = () => {
-    void reader.cancel().catch(() => undefined)
-  }
-  throwIfAborted(...signals)
-  for (const signal of signals) signal?.addEventListener('abort', cancelReader, { once: true })
-
-  const processBlock = async (block: string) => {
-    if (block.split(/\r?\n/).some((line) => line.startsWith('data:'))) hasDataLine = true
-    const data = parseServerSentEventBlock(block)
-    if (!data) return
-
-    let event: unknown
-    try {
-      event = JSON.parse(data)
-    } catch {
-      throw new Error(appendStreamingFormatHint(data))
-    }
-    if (!isRecordValue(event)) return
-
-    const errorMessage = getStreamEventErrorMessage(event)
-    if (errorMessage) throw new Error(errorMessage)
-
-    throwIfAborted(...signals)
-    await onEvent(event)
-    await Promise.resolve()
-    throwIfAborted(...signals)
-  }
-
-  try {
-    while (true) {
-      throwIfAborted(...signals)
-      const { value, done } = await reader.read()
-      throwIfAborted(...signals)
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-
-      let separatorIndex = buffer.search(/\r?\n\r?\n/)
-      while (separatorIndex >= 0) {
-        const block = buffer.slice(0, separatorIndex)
-        const separator = buffer.match(/\r?\n\r?\n/)?.[0] ?? '\n\n'
-        buffer = buffer.slice(separatorIndex + separator.length)
-        await processBlock(block)
-        separatorIndex = buffer.search(/\r?\n\r?\n/)
-      }
-    }
-
-    buffer += decoder.decode()
-    throwIfAborted(...signals)
-    if (buffer.trim()) await processBlock(buffer)
-    if (!hasDataLine) throw new Error(appendStreamingFormatHint('未从流式响应中解析到有效的 data 事件'))
-  } finally {
-    for (const signal of signals) signal?.removeEventListener('abort', cancelReader)
-  }
-}
-
 function extractText(payload: ResponsesApiResponse) {
   const chunks: string[] = []
 
@@ -460,38 +372,15 @@ function extractImages(payload: ResponsesApiResponse, fallbackMime: string): Age
   for (const item of payload.output ?? []) {
     if (item.type !== 'image_generation_call') continue
 
-    const result = item.result
-    if (typeof result === 'string' && result.trim()) {
-      images.push({
-        toolCallId: typeof item.id === 'string' ? item.id : undefined,
-        action: typeof item.action === 'string' ? item.action : undefined,
-        dataUrl: normalizeBase64Image(result, fallbackMime),
-        actualParams: pickActualParams(item),
-        revisedPrompt: typeof item.revised_prompt === 'string' ? item.revised_prompt : undefined,
-      })
-      continue
-    }
-
-    if (result && typeof result === 'object') {
-      const b64 = typeof result.b64_json === 'string'
-        ? result.b64_json
-        : typeof result.base64 === 'string'
-        ? result.base64
-        : typeof result.image === 'string'
-        ? result.image
-        : typeof result.data === 'string'
-        ? result.data
-        : ''
-      if (b64.trim()) {
-        images.push({
-          toolCallId: typeof item.id === 'string' ? item.id : undefined,
-          action: typeof item.action === 'string' ? item.action : undefined,
-          dataUrl: normalizeBase64Image(b64, fallbackMime),
-          actualParams: pickActualParams(item),
-          revisedPrompt: typeof item.revised_prompt === 'string' ? item.revised_prompt : undefined,
-        })
-      }
-    }
+    const b64 = getResponsesImageResultBase64(item.result)
+    if (!b64) continue
+    images.push({
+      toolCallId: typeof item.id === 'string' ? item.id : undefined,
+      action: typeof item.action === 'string' ? item.action : undefined,
+      dataUrl: normalizeBase64Image(b64, fallbackMime),
+      actualParams: pickActualParams(item),
+      revisedPrompt: typeof item.revised_prompt === 'string' ? item.revised_prompt : undefined,
+    })
   }
 
   return images
@@ -500,22 +389,8 @@ function extractImages(payload: ResponsesApiResponse, fallbackMime: string): Age
 function extractImageFromOutputItem(item: ResponsesOutputItem, fallbackMime: string): AgentApiResultImage | null {
   if (item.type !== 'image_generation_call') return null
 
-  const result = item.result
-  const b64 = typeof result === 'string'
-    ? result
-    : result && typeof result === 'object'
-    ? typeof result.b64_json === 'string'
-      ? result.b64_json
-      : typeof result.base64 === 'string'
-      ? result.base64
-      : typeof result.image === 'string'
-      ? result.image
-      : typeof result.data === 'string'
-      ? result.data
-      : ''
-    : ''
-
-  if (!b64.trim()) return null
+  const b64 = getResponsesImageResultBase64(item.result)
+  if (!b64) return null
   return {
     toolCallId: typeof item.id === 'string' ? item.id : undefined,
     action: typeof item.action === 'string' ? item.action : undefined,
@@ -671,7 +546,11 @@ async function parseAgentStreamResponse(
     if (type === 'response.completed' || isRecordValue(event.response)) {
       completedPayload = payload
     }
-  }, [signal, callerSignal])
+  }, {
+    signals: [signal, callerSignal],
+    formatErrorMessage: appendStreamingFormatHint,
+    getEventErrorMessage: getStreamEventErrorMessage,
+  })
 
   throwIfAborted(signal, callerSignal)
   const payload: ResponsesApiResponse | null = completedPayload ?? (outputItems.length ? { output: outputItems } : null)
@@ -950,7 +829,11 @@ export async function callBatchImageSingle(opts: {
             }
           }
         }
-      }, [controller.signal, signal])
+      }, {
+        signals: [controller.signal, signal],
+        formatErrorMessage: appendStreamingFormatHint,
+        getEventErrorMessage: getStreamEventErrorMessage,
+      })
 
       return {
         batchItemId,
