@@ -2657,12 +2657,6 @@ function sanitizeResponseOutputItemForInput(item: ResponsesOutputItem): unknown 
   return item
 }
 
-function filterAgentRoundResponseOutputForInput(_round: AgentRound, _tasks: TaskRecord[], output: ResponsesOutputItem[]) {
-  // image_generation_call items are now dropped by sanitizeResponseOutputItemForInput;
-  // this filter is kept as a structural pass-through for future use.
-  return output
-}
-
 function canonicalizeBatchFunctionCallArguments(output: ResponsesOutputItem[]) {
   let changed = false
   const canonical = output.map((item) => {
@@ -2989,7 +2983,7 @@ async function buildAgentApiInput(conversation: AgentConversation, currentRound:
 
     const output = getAgentRoundResponseOutput(round, tasks)
     if (output?.length) {
-      const sanitizedOutput = sanitizeResponseOutputForInput(filterAgentRoundResponseOutputForInput(round, tasks, output))
+      const sanitizedOutput = sanitizeResponseOutputForInput(output)
       if (sanitizedOutput.length > 0) {
         input.push(...sanitizedOutput)
       } else {
