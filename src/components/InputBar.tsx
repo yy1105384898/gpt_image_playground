@@ -1,6 +1,6 @@
 import { useRef, useEffect, useCallback, useState, useMemo, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { deleteFavoriteCollection, useStore, submitTask, submitAgentMessage, stopAgentResponse, addImageFromFile, createInputImageFromFile, deleteImageIfUnreferenced, removeMultipleTasks, taskMatchesFilterStatus, taskMatchesSearchQuery } from '../store'
+import { deleteFavoriteCollection, useStore, submitTask, submitAgentMessage, stopAgentResponse, addImageFromFile, removeMultipleTasks, taskMatchesFilterStatus, taskMatchesSearchQuery } from '../store'
 import { DEFAULT_PARAMS, type TaskRecord } from '../types'
 import { getActiveAgentRounds } from '../lib/agentConversationState'
 import { getActiveApiProfile, getAgentImageApiProfile, normalizeSettings } from '../lib/apiProfiles'
@@ -88,13 +88,11 @@ export default function InputBar() {
   const setPrompt = useStore((s) => s.setPrompt)
   const inputImages = useStore((s) => s.inputImages)
   const addInputImage = useStore((s) => s.addInputImage)
-  const replaceInputImage = useStore((s) => s.replaceInputImage)
   const removeInputImage = useStore((s) => s.removeInputImage)
   const clearInputImages = useStore((s) => s.clearInputImages)
   const params = useStore((s) => s.params)
   const setParams = useStore((s) => s.setParams)
   const settings = useStore((s) => s.settings)
-  const setSettings = useStore((s) => s.setSettings)
   const reusedTaskApiProfileId = useStore((s) => s.reusedTaskApiProfileId)
   const setShowSettings = useStore((s) => s.setShowSettings)
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
@@ -308,12 +306,10 @@ export default function InputBar() {
   }, [clearFavoriteCollectionSelection, defaultFavoriteCollectionId, favoriteCollections, selectedFavoriteCollectionIds, setConfirmDialog, showToast, tasks])
 
   const maskDraft = useStore((s) => s.maskDraft)
-  const setMaskEditorImageId = useStore((s) => s.setMaskEditorImageId)
   const moveInputImage = useStore((s) => s.moveInputImage)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
-  const replaceFileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLDivElement>(null)
   const cardRef = useRef<HTMLDivElement>(null)
   const imagesRef = useRef<HTMLDivElement>(null)
@@ -346,13 +342,11 @@ export default function InputBar() {
   const imageDragOverIndexRef = useRef<number | null>(null)
   const imageDragPreviewRef = useRef<HTMLElement | null>(null)
   const suppressImageClickRef = useRef(false)
-  const replaceImageTargetRef = useRef<{ index: number; id: string } | null>(null)
   const isUserInputRef = useRef(false)
   const imageHintLockedRef = useRef(false)
   const imageHintReleaseRef = useRef<(() => void) | null>(null)
   const [cursorPos, setCursorPos] = useState(0)
   const [menuLeft, setMenuLeft] = useState(0)
-  const maskConflictNoticeShownRef = useRef(false)
   const showPromptExpand = promptExpanded || promptCanExpand
 
   const updateInputBarClearance = useCallback(() => {
@@ -837,98 +831,9 @@ export default function InputBar() {
   const handleFilesRef = useRef(handleFiles)
   handleFilesRef.current = handleFiles
 
-  const openReplaceReferenceFilePicker = useCallback((idx: number, imageId: string) => {
-    replaceImageTargetRef.current = { index: idx, id: imageId }
-    replaceFileInputRef.current?.click()
-  }, [])
-
-  const commitReferenceEditChoice = useCallback((choice: 'replace-reference' | 'add-mask', remember?: boolean) => {
-    if (remember) setSettings({ referenceImageEditAction: choice })
-  }, [setSettings])
-
-  const handleEditReferenceImage = useCallback((img: (typeof inputImages)[number], idx: number, isMaskTarget: boolean) => {
-    if (isMaskTarget) {
-      setMaskEditorImageId(img.id)
-      return
-    }
-
-    if (settings.referenceImageEditAction === 'replace-reference') {
-      openReplaceReferenceFilePicker(idx, img.id)
-      return
-    }
-
-    if (settings.referenceImageEditAction === 'add-mask') {
-      setMaskEditorImageId(img.id)
-      return
-    }
-
-    setConfirmDialog({
-      title: '编辑参考图',
-      message: '请选择这次要执行的操作。若不勾选下方的选项，则每次都询问；勾选后可在 **设置-习惯配置** 修改选择。',
-      checkbox: { label: '以后默认执行此选择' },
-      buttons: [
-        {
-          label: '替换参考图',
-          tone: 'secondary',
-          action: (remember) => {
-            commitReferenceEditChoice('replace-reference', remember)
-            openReplaceReferenceFilePicker(idx, img.id)
-          },
-        },
-        {
-          label: '添加遮罩',
-          tone: 'primary',
-          action: (remember) => {
-            commitReferenceEditChoice('add-mask', remember)
-            setMaskEditorImageId(img.id)
-          },
-        },
-      ],
-    })
-  }, [commitReferenceEditChoice, openReplaceReferenceFilePicker, setConfirmDialog, setMaskEditorImageId, settings.referenceImageEditAction])
-
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     await handleFilesRef.current(e.target.files || [])
     e.target.value = ''
-  }
-
-  const handleReplaceFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    e.target.value = ''
-    const target = replaceImageTargetRef.current
-    replaceImageTargetRef.current = null
-    if (!file || !target) return
-
-    try {
-      const image = await createInputImageFromFile(file)
-      if (!image) {
-        showToast('请选择有效图片', 'error')
-        return
-      }
-
-      const currentImages = useStore.getState().inputImages
-      const currentIdx = currentImages.findIndex((item) => item.id === target.id)
-      const targetIdx = currentIdx >= 0 ? currentIdx : target.index
-      const previous = currentImages[targetIdx]
-      if (!previous) {
-        void deleteImageIfUnreferenced(image.id)
-        showToast('原参考图已不存在', 'error')
-        return
-      }
-      if (previous.id === image.id) {
-        showToast('参考图未变化', 'info')
-        return
-      }
-      if (currentImages.some((item, itemIdx) => itemIdx !== targetIdx && item.id === image.id)) {
-        showToast('这张图片已在参考图中', 'info')
-        return
-      }
-
-      replaceInputImage(targetIdx, image)
-      showToast('参考图已替换', 'success')
-    } catch (err) {
-      showToast(`参考图替换失败：${err instanceof Error ? err.message : String(err)}`, 'error')
-    }
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -1348,7 +1253,6 @@ export default function InputBar() {
 
   const renderImageThumb = (img: (typeof inputImages)[number], idx: number) => {
     const isMaskTarget = maskDraft?.targetImageId === img.id
-    const canEdit = !maskTargetImage || isMaskTarget
     const imageHintText = isMaskTarget ? '遮罩图必须为第一张图' : ''
     const displaySrc = isMaskTarget && maskPreviewUrl ? maskPreviewUrl : img.dataUrl
     const isImageDragging = imageDragIndex === idx
@@ -1511,19 +1415,11 @@ export default function InputBar() {
           }`}
           onClick={() => {
             if (suppressImageClickRef.current) return
-            if (isMaskTarget) {
-              setMaskEditorImageId(img.id)
-              return
-            }
-            if (maskTargetImage && !maskConflictNoticeShownRef.current) {
-              maskConflictNoticeShownRef.current = true
-              showToast('只能有一张遮罩图', 'info')
-            }
             setLightboxImageId(img.id, inputImages.map((i) => i.id))
           }}
         >
           {displaySrc && (
-            <div className="h-full w-full overflow-hidden rounded-xl">
+            <div className="h-full w-full overflow-hidden">
               <img
                 src={displaySrc}
                 className="w-full h-full object-cover hover:opacity-90 transition-opacity pointer-events-none"
@@ -1539,20 +1435,20 @@ export default function InputBar() {
           <span className="absolute bottom-1 left-1 flex h-4 w-4 items-center justify-center rounded-full bg-black/55 text-[9px] font-semibold text-white backdrop-blur-sm z-10 pointer-events-none">
             {idx + 1}
           </span>
-          {canEdit && (
-            <button 
-              className="absolute inset-0 w-full h-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer z-20 focus:outline-none border-none"
-              onClick={(e) => {
-                e.stopPropagation()
-                handleEditReferenceImage(img, idx, isMaskTarget)
-              }}
-              title={isMaskTarget ? "编辑遮罩" : "编辑"}
-            >
-              <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-              </svg>
-            </button>
-          )}
+          <button
+            className="absolute inset-0 w-full h-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer z-20 focus:outline-none border-none"
+            onClick={(e) => {
+              e.stopPropagation()
+              setLightboxImageId(img.id, inputImages.map((i) => i.id))
+            }}
+            title="查看"
+            aria-label="查看参考图"
+          >
+            <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.25 12s3.5-6 9.75-6 9.75 6 9.75 6-3.5 6-9.75 6S2.25 12 2.25 12z" />
+              <circle cx="12" cy="12" r="2.75" strokeWidth={2} />
+            </svg>
+          </button>
         </div>
         {!isMaskTarget && (
           <span
@@ -2042,13 +1938,6 @@ export default function InputBar() {
             capture="environment"
             className="hidden"
             onChange={handleFileUpload}
-          />
-          <input
-            ref={replaceFileInputRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={handleReplaceFileUpload}
           />
         </div>
       </div>
