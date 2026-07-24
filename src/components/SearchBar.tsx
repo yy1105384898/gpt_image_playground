@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, type ReactNode } from 'react'
-import { ALL_FAVORITES_COLLECTION_ID, clearFailedTasks, getTaskFavoriteCollectionIds, removeMultipleTasks, useStore, taskMatchesFilterStatus, taskMatchesSearchQuery } from '../store'
+import { clearFailedTasks, useStore, taskMatchesFilterStatus, taskMatchesSearchQuery } from '../store'
+import { ALL_FAVORITES_COLLECTION_ID, getTaskFavoriteCollectionIds } from '../lib/favoriteState'
+import { removeMultipleTasks } from '../store'
 import { useTooltip } from '../hooks/useTooltip'
 import Select from './Select'
 import { ChevronLeftIcon, CollectionManageIcon, FavoriteIcon, PlusIcon, TrashIcon } from './icons'
@@ -58,6 +60,7 @@ export default function SearchBar() {
   const setShowPromptLibrary = useStore((s) => s.setShowPromptLibrary)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
   const tasks = useStore((s) => s.tasks)
+  const defaultFavoriteCollectionId = useStore((s) => s.defaultFavoriteCollectionId)
   const selectedTaskIds = useStore((s) => s.selectedTaskIds)
   const setSelectedTaskIds = useStore((s) => s.setSelectedTaskIds)
   const failedCount = useStore((s) => {
@@ -66,7 +69,7 @@ export default function SearchBar() {
       if (!taskMatchesFilterStatus(task, 'error')) return false
       if (s.filterFavorite) {
         if (!task.isFavorite) return false
-        if (s.activeFavoriteCollectionId && s.activeFavoriteCollectionId !== ALL_FAVORITES_COLLECTION_ID && !getTaskFavoriteCollectionIds(task).includes(s.activeFavoriteCollectionId)) return false
+        if (s.activeFavoriteCollectionId && s.activeFavoriteCollectionId !== ALL_FAVORITES_COLLECTION_ID && !getTaskFavoriteCollectionIds(task, s.defaultFavoriteCollectionId).includes(s.activeFavoriteCollectionId)) return false
       }
       return taskMatchesSearchQuery(task, q)
     }).length
@@ -79,12 +82,12 @@ export default function SearchBar() {
     return tasks.filter((task) => {
       if (filterFavorite) {
         if (!task.isFavorite) return false
-        if (activeFavoriteCollectionId && activeFavoriteCollectionId !== ALL_FAVORITES_COLLECTION_ID && !getTaskFavoriteCollectionIds(task).includes(activeFavoriteCollectionId)) return false
+        if (activeFavoriteCollectionId && activeFavoriteCollectionId !== ALL_FAVORITES_COLLECTION_ID && !getTaskFavoriteCollectionIds(task, defaultFavoriteCollectionId).includes(activeFavoriteCollectionId)) return false
       }
       if (!taskMatchesFilterStatus(task, filterStatus)) return false
       return taskMatchesSearchQuery(task, q)
     }).map((task) => task.id)
-  }, [activeFavoriteCollectionId, filterFavorite, filterStatus, searchQuery, tasks])
+  }, [activeFavoriteCollectionId, defaultFavoriteCollectionId, filterFavorite, filterStatus, searchQuery, tasks])
   const allVisibleSelected = visibleTaskIds.length > 0 && visibleTaskIds.every((id) => selectedTaskIds.includes(id))
 
   useEffect(() => {
@@ -120,7 +123,7 @@ export default function SearchBar() {
         if (!taskMatchesFilterStatus(task, 'error')) return false
         if (state.filterFavorite) {
           if (!task.isFavorite) return false
-          if (state.activeFavoriteCollectionId && state.activeFavoriteCollectionId !== ALL_FAVORITES_COLLECTION_ID && !getTaskFavoriteCollectionIds(task).includes(state.activeFavoriteCollectionId)) return false
+          if (state.activeFavoriteCollectionId && state.activeFavoriteCollectionId !== ALL_FAVORITES_COLLECTION_ID && !getTaskFavoriteCollectionIds(task, state.defaultFavoriteCollectionId).includes(state.activeFavoriteCollectionId)) return false
         }
         return taskMatchesSearchQuery(task, q)
       })
