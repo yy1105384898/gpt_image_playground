@@ -7,6 +7,8 @@ const NON_MODEL_ID_KEYS = new Set([
   'openai_generations',
   'openai_image',
   'openai_images',
+  'openai_video',
+  'openai_videos',
   'gemini',
   'google',
   'anthropic',

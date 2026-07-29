@@ -130,7 +130,7 @@ describe('model catalog', () => {
   it('sanitizes stale selected model settings', () => {
     stubLocalStorage()
 
-    setSelectedModels('newapi', 'image', ['openai', 'gpt-image-2', 'gemini', 'openai_generations'])
+    setSelectedModels('newapi', 'image', ['openai', 'gpt-image-2', 'gemini', 'openai_generations', 'openai-video'])
 
     expect(getSelectedModels('newapi', 'image')).toEqual(['gpt-image-2'])
   })
