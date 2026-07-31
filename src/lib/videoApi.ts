@@ -64,12 +64,6 @@ function resolveSize(aspect: string): string {
   return VIDEO_ASPECTS.find((a) => a.value === aspect)?.size ?? '720x1280'
 }
 
-function resolveAspectRatio(params: Pick<VideoGenParams, 'aspect' | 'size'>): string {
-  if (params.aspect === '16:9' || params.aspect === '9:16') return params.aspect
-  if (params.size === '1280x720' || params.size === '1920x1080') return '16:9'
-  return '9:16'
-}
-
 function resolveRequestSize(params: Pick<VideoGenParams, 'aspect' | 'size'>): string {
   return params.size && params.size !== '自动' ? params.size : resolveSize(params.aspect)
 }
@@ -213,18 +207,13 @@ export async function createVideo(params: VideoGenParams, signal?: AbortSignal):
   form.append('model', params.model)
   form.append('prompt', params.prompt)
   form.append('seconds', String(params.seconds))
-  form.append('duration', String(params.seconds))
-  form.append('mode', params.mode)
   form.append('size', resolveRequestSize(params))
-  form.append('aspect_ratio', resolveAspectRatio(params))
   form.append('resolution', '720p')
   form.append('preset', 'normal')
   if (params.referenceImageDataUrl && params.mode !== 'text') {
     const blob = await dataUrlToBlob(params.referenceImageDataUrl, 'image/png')
     const file = new File([blob], 'reference.png', { type: blob.type || 'image/png' })
     form.append('image', file)
-    form.append('image[]', file)
-    form.append('input_image', file)
   }
 
   const url = buildApiUrl(profile.baseUrl, 'videos', proxyConfig, useApiProxy)
