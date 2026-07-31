@@ -148,7 +148,11 @@ export function readClientDevProxyConfig(): DevProxyConfig | null {
 function isHostedPlaygroundProxyAvailable(): boolean {
   if (typeof window === 'undefined') return false
   const pathname = window.location.pathname.replace(/\/+/g, '/')
-  return getPlaygroundModelChannels().length > 0 && (pathname === '/playground' || pathname.startsWith('/playground/'))
+  return getPlaygroundModelChannels().length > 0 && (
+    pathname === '/playground' ||
+    pathname.startsWith('/playground/') ||
+    window.location.hostname === 'huiying.yangyangnj.top'
+  )
 }
 
 export function isApiProxyAvailable(proxyConfig: DevProxyConfig | null = readClientDevProxyConfig()): boolean {
