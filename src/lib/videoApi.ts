@@ -1,13 +1,12 @@
 // Grok video generation API.
 //
 // Contract reverse-engineered from the upstream (manxiaobai) build:
-//   POST   {base}/videos              (multipart/form-data) -> { id }
+//   POST   {base}/videos              (JSON or multipart/form-data) -> { id }
 //   GET    {base}/videos/{id}         -> { status, ... }   (poll every 5s)
 //   GET    {base}/videos/{id}/content -> the video file (auth required)
 //
-// NOTE: New API's official xAI/Grok channel does NOT support /v1/videos.
-// The relay must route grok-video-* to a grok2api-backed OpenAI-compatible
-// channel, otherwise the create call fails with "invalid api platform: 48".
+// NOTE: NewAPI's Geeknow Grok channel requires JSON for grok-imagine-video;
+// other compatible video channels continue to use multipart/form-data.
 
 import { useStore } from '../store'
 import { buildApiUrl, getPlaygroundApiResolvedTarget, getProxyRequestHeaders, readClientDevProxyConfig, shouldUseApiProxy } from './devProxy'
@@ -203,25 +202,44 @@ export async function createVideo(params: VideoGenParams, signal?: AbortSignal):
   const proxyConfig = readClientDevProxyConfig()
   const useApiProxy = shouldUseApiProxy(profile.apiProxy, proxyConfig)
 
-  const form = new FormData()
-  form.append('model', params.model)
-  form.append('prompt', params.prompt)
-  form.append('seconds', String(params.seconds))
-  form.append('size', resolveRequestSize(params))
-  form.append('resolution', '720p')
-  form.append('preset', 'normal')
-  if (params.referenceImageDataUrl && params.mode !== 'text') {
-    const blob = await dataUrlToBlob(params.referenceImageDataUrl, 'image/png')
-    const file = new File([blob], 'reference.png', { type: blob.type || 'image/png' })
-    form.append('image', file)
+  const isGrokImagineVideo = /^grok-imagine-video(?:-|$)/i.test(params.model)
+  const headers: Record<string, string> = {
+    Authorization: authHeader(profile.apiKey),
+    ...getProxyRequestHeaders('video'),
+  }
+  let body: BodyInit
+  if (isGrokImagineVideo) {
+    headers['Content-Type'] = 'application/json'
+    body = JSON.stringify({
+      model: params.model,
+      prompt: params.prompt,
+      seconds: String(params.seconds),
+      aspect_ratio: params.aspect,
+      resolution: '720P',
+      ...(params.referenceImageDataUrl && params.mode !== 'text' ? { image: params.referenceImageDataUrl } : {}),
+    })
+  } else {
+    const form = new FormData()
+    form.append('model', params.model)
+    form.append('prompt', params.prompt)
+    form.append('seconds', String(params.seconds))
+    form.append('size', resolveRequestSize(params))
+    form.append('resolution', '720p')
+    form.append('preset', 'normal')
+    if (params.referenceImageDataUrl && params.mode !== 'text') {
+      const blob = await dataUrlToBlob(params.referenceImageDataUrl, 'image/png')
+      const file = new File([blob], 'reference.png', { type: blob.type || 'image/png' })
+      form.append('image', file)
+    }
+    body = form
   }
 
   const url = buildApiUrl(profile.baseUrl, 'videos', proxyConfig, useApiProxy)
   const resp = await fetch(url, {
     method: 'POST',
-    headers: { Authorization: authHeader(profile.apiKey), ...getProxyRequestHeaders('video') },
+    headers,
     cache: 'no-store',
-    body: form,
+    body,
     signal,
   })
   if (!resp.ok) throw new Error(await readError(resp))
