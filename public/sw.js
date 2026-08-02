@@ -1,6 +1,7 @@
-const CACHE_NAME = 'gpt-image-playground-v0.6.11-20260702-logo'
+const CACHE_NAME = 'gpt-image-playground-v0.7.3'
 const APP_SHELL = ['./', './index.html', './manifest.webmanifest', './Y2-Nexus-logo.svg']
-const STATIC_PATH_RE = /\/(?:assets|prompt-library)\//
+const APP_SHELL_URLS = new Set(APP_SHELL.map((path) => new URL(path, self.registration.scope).href))
+const ASSETS_PATH = new URL('./assets/', self.registration.scope).pathname
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -40,9 +41,7 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
-  if (!STATIC_PATH_RE.test(url.pathname) && !APP_SHELL.some((path) => url.pathname.endsWith(path.replace('./', '/')))) {
-    return
-  }
+  if (!APP_SHELL_URLS.has(url.href) && !url.pathname.startsWith(ASSETS_PATH)) return
 
   event.respondWith(
     caches.match(request).then((cached) => {
