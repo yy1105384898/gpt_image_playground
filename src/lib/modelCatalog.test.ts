@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PLAYGROUND_MODEL_CHANNELS_STORAGE_KEY } from './playgroundChannels'
-import { extractModelIds, getChannelModels, getSelectedModels, setSelectedModels } from './modelCatalog'
+import { extractModelIds, getChannelModelList, getChannelModels, getSelectedModels, MODEL_REQUEST_TIMEOUT_MS, setSelectedModels } from './modelCatalog'
 
 function stubLocalStorage(initial: Record<string, string> = {}) {
   const store = new Map(Object.entries(initial))
@@ -125,6 +125,31 @@ describe('model catalog', () => {
       Authorization: 'Bearer video-key',
       'X-YY-API-Target': 'https://relay.example.com/v1',
     })
+  })
+
+  it('settles when a model endpoint never responds', async () => {
+    vi.useFakeTimers()
+    stubLocalStorage({
+      [PLAYGROUND_MODEL_CHANNELS_STORAGE_KEY]: JSON.stringify([{
+        id: 'newapi',
+        name: 'YY NewAPI',
+        apiFormat: 'openai',
+        baseUrl: 'https://yynewapi.yangyangnj.pw/v1',
+        apiKey: 'channel-key',
+        models: [],
+      }]),
+    })
+    const fetchMock = vi.fn((_url: string, init: RequestInit = {}) => new Promise((_resolve, reject) => {
+      init.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const pending = getChannelModelList('newapi', true)
+    await vi.advanceTimersByTimeAsync(MODEL_REQUEST_TIMEOUT_MS * 2)
+
+    await expect(pending).resolves.toEqual([])
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    vi.useRealTimers()
   })
 
   it('sanitizes stale selected model settings', () => {

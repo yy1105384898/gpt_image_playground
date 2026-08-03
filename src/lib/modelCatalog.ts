@@ -43,6 +43,7 @@ const SIMPLIFIED_PROFILE_IDS: Record<PlaygroundApiPurpose, string> = {
 const SELECTED_MODELS_STORAGE_KEY = 'yy-image-pro.selected-models'
 const CHANNEL_MODELS_STORAGE_KEY = 'yy-image-pro.channel-model-cache'
 const CHANNEL_MODELS_CACHE_TTL_MS = 5 * 60 * 1000
+export const MODEL_REQUEST_TIMEOUT_MS = 15_000
 export const MODEL_CATALOG_UPDATED_EVENT = 'yy-model-catalog-updated'
 
 interface StoredChannelModelCache {
@@ -237,10 +238,16 @@ async function fetchChannelModels(target: string): Promise<string[]> {
   }
   if (auth) headers.Authorization = auth
   const requestModels = async (url: string) => {
-    const resp = await fetch(url, { method: 'GET', headers, cache: 'no-store' })
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-    const json = await resp.json()
-    return extractModelIds(json)
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), MODEL_REQUEST_TIMEOUT_MS)
+    try {
+      const resp = await fetch(url, { method: 'GET', headers, cache: 'no-store', signal: controller.signal })
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+      const json = await resp.json()
+      return extractModelIds(json)
+    } finally {
+      clearTimeout(timeoutId)
+    }
   }
   try {
     const models = await requestModels(buildApiUrl(apiTarget, 'models', proxyConfig, false))
