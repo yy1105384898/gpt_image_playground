@@ -2069,7 +2069,7 @@ export default function SettingsModal() {
                                   disabled={channelLoading || loadingChannelId === 'all'}
                                   className="rounded-lg border border-gray-200/80 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 transition hover:bg-gray-100 disabled:cursor-wait disabled:opacity-60 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200 dark:hover:bg-white/[0.08]"
                                 >
-                                  {channelLoading ? '拉取中…' : '拉取全部'}
+                                  {channelLoading ? '拉取中…' : '拉取模型'}
                                 </button>
                                 <button
                                   type="button"
