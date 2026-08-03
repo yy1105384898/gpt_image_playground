@@ -22,8 +22,8 @@ export interface PlaygroundModelChannel {
 export const PLAYGROUND_MODEL_CHANNELS_STORAGE_KEY = 'yy-image-pro.model-channels.v1'
 export const PLAYGROUND_MODEL_CHANNEL_KEY_SEPARATOR = '::yy-key::'
 export const BUILT_IN_NEWAPI_BASE_URLS = [
-  'https://huiying.yangyangnj.top/v1',
-  'https://huiying.yangyangnj.pw/v1',
+  'https://yynewapi.yangyangnj.top/v1',
+  'https://yynewapi.yangyangnj.pw/v1',
 ] as const
 
 export const DEFAULT_PLAYGROUND_MODEL_CHANNELS: PlaygroundModelChannel[] = [

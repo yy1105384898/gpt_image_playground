@@ -487,7 +487,7 @@ describe('mask draft lifecycle in store actions', () => {
     const [request] = vi.mocked(callImageApi).mock.calls[0]
     expect(request.settings).toMatchObject({
       activeProfileId: imageProfile.id,
-      baseUrl: 'https://huiying.yangyangnj.top/v1',
+      baseUrl: 'https://yynewapi.yangyangnj.top/v1',
       apiKey: 'image-channel-key',
       model: 'flux-pro-2',
       apiMode: 'images',
