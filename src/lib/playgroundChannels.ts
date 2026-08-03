@@ -21,13 +21,17 @@ export interface PlaygroundModelChannel {
 
 export const PLAYGROUND_MODEL_CHANNELS_STORAGE_KEY = 'yy-image-pro.model-channels.v1'
 export const PLAYGROUND_MODEL_CHANNEL_KEY_SEPARATOR = '::yy-key::'
+export const BUILT_IN_NEWAPI_BASE_URLS = [
+  'https://huiying.yangyangnj.top/v1',
+  'https://huiying.yangyangnj.pw/v1',
+] as const
 
 export const DEFAULT_PLAYGROUND_MODEL_CHANNELS: PlaygroundModelChannel[] = [
   {
     id: 'newapi',
     name: 'YY NewAPI',
     apiFormat: 'openai',
-    baseUrl: 'https://yynewapi.yangyangnj.top/v1',
+    baseUrl: BUILT_IN_NEWAPI_BASE_URLS[0],
     apiKey: '',
     models: [],
     apiKeys: [{ id: 'default', name: '默认令牌', apiKey: '', models: [] }],
@@ -58,7 +62,13 @@ function getProtectedPlaygroundModelChannel(channelOrId: PlaygroundModelChannel 
 }
 
 export function getProtectedPlaygroundModelChannelBaseUrl(channelOrId: PlaygroundModelChannel | string): string | null {
-  return getProtectedPlaygroundModelChannel(channelOrId)?.baseUrl ?? null
+  const protectedChannel = getProtectedPlaygroundModelChannel(channelOrId)
+  if (!protectedChannel) return null
+  if (protectedChannel.id !== 'newapi' || typeof channelOrId === 'string') return protectedChannel.baseUrl
+  const baseUrl = normalizePlaygroundBaseUrl(channelOrId.baseUrl)
+  return BUILT_IN_NEWAPI_BASE_URLS.includes(baseUrl as (typeof BUILT_IN_NEWAPI_BASE_URLS)[number])
+    ? baseUrl
+    : protectedChannel.baseUrl
 }
 
 function newChannelId() {
@@ -168,8 +178,12 @@ function normalizeChannel(input: unknown, fallback?: PlaygroundModelChannel): Pl
 
 function mergeProtectedChannel(defaultChannel: PlaygroundModelChannel, channels: PlaygroundModelChannel[]): PlaygroundModelChannel {
   const saved = channels.find((channel) => channel.id === defaultChannel.id)
+  const savedBaseUrl = normalizePlaygroundBaseUrl(saved?.baseUrl ?? '')
   return {
     ...defaultChannel,
+    baseUrl: defaultChannel.id === 'newapi' && BUILT_IN_NEWAPI_BASE_URLS.includes(savedBaseUrl as (typeof BUILT_IN_NEWAPI_BASE_URLS)[number])
+      ? savedBaseUrl
+      : defaultChannel.baseUrl,
     name: saved?.name?.trim() || defaultChannel.name,
     apiFormat: saved?.apiFormat ?? defaultChannel.apiFormat,
     apiKey: saved?.apiKey ?? defaultChannel.apiKey,

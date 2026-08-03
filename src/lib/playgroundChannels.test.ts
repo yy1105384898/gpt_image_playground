@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  BUILT_IN_NEWAPI_BASE_URLS,
   DEFAULT_PLAYGROUND_MODEL_CHANNELS,
   PLAYGROUND_MODEL_CHANNELS_STORAGE_KEY,
   findPlaygroundModelChannelBindingByTarget,
@@ -75,6 +76,25 @@ describe('playground model channels', () => {
     })
   })
 
+  it('keeps a supported built-in NewAPI base URL selection', () => {
+    stubLocalStorage({
+      [PLAYGROUND_MODEL_CHANNELS_STORAGE_KEY]: JSON.stringify([{
+        id: 'newapi',
+        name: 'YY NewAPI',
+        apiFormat: 'openai',
+        baseUrl: BUILT_IN_NEWAPI_BASE_URLS[1],
+        apiKey: 'newapi-key',
+        models: ['grok-imagine-image'],
+      }]),
+    })
+
+    expect(getPlaygroundModelChannels()[0]).toMatchObject({
+      baseUrl: BUILT_IN_NEWAPI_BASE_URLS[1],
+      apiKey: 'newapi-key',
+      models: ['grok-imagine-image'],
+    })
+  })
+
   it('keeps custom channels that share a protected relay url', () => {
     stubLocalStorage({
       [PLAYGROUND_MODEL_CHANNELS_STORAGE_KEY]: JSON.stringify([
@@ -102,7 +122,7 @@ describe('playground model channels', () => {
     expect(channels.slice(0, 2).every(isProtectedPlaygroundModelChannel)).toBe(true)
     expect(channels[0]).toMatchObject({
       id: 'newapi',
-      baseUrl: 'https://yynewapi.yangyangnj.top/v1',
+      baseUrl: BUILT_IN_NEWAPI_BASE_URLS[0],
       apiKey: 'built-in-key',
       models: ['flux-pro-2'],
     })

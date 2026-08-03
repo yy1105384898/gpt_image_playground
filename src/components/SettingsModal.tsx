@@ -41,6 +41,7 @@ import { getChannelModelList, getChannelModels, getDefaultSelectedModels, getSel
 import { uniqueModelIds } from '../lib/modelIds'
 import { getStoredPlaygroundPurposeConfig, savePlaygroundPurposeConfig } from '../lib/playgroundPurposeConfig'
 import {
+  BUILT_IN_NEWAPI_BASE_URLS,
   createPlaygroundModelChannel,
   createPlaygroundModelChannelKey,
   getPlaygroundModelChannelApiKey,
@@ -2111,14 +2112,23 @@ export default function SettingsModal() {
                               </label>
                               <label className="block">
                                 <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">Base URL</span>
-                                <input
-                                  value={channelDisplayBaseUrl}
-                                  onChange={(event) => updateChannel(channel.id, { baseUrl: event.target.value })}
-                                  onBlur={(event) => updateChannel(channel.id, { baseUrl: event.target.value.trim().replace(/\/+$/, '') })}
-                                  placeholder="https://api.openai.com/v1"
-                                  disabled={protectedChannel}
-                                  className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 disabled:cursor-not-allowed disabled:bg-gray-100/60 disabled:text-gray-400 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50 dark:disabled:bg-white/[0.05] dark:disabled:text-gray-500"
-                                />
+                                {channel.id === 'newapi' ? (
+                                  <Select
+                                    value={channelDisplayBaseUrl}
+                                    onChange={(value) => updateChannel(channel.id, { baseUrl: value })}
+                                    options={BUILT_IN_NEWAPI_BASE_URLS.map((value) => ({ label: value, value }))}
+                                    className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                                  />
+                                ) : (
+                                  <input
+                                    value={channelDisplayBaseUrl}
+                                    onChange={(event) => updateChannel(channel.id, { baseUrl: event.target.value })}
+                                    onBlur={(event) => updateChannel(channel.id, { baseUrl: event.target.value.trim().replace(/\/+$/, '') })}
+                                    placeholder="https://api.openai.com/v1"
+                                    disabled={protectedChannel}
+                                    className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 disabled:cursor-not-allowed disabled:bg-gray-100/60 disabled:text-gray-400 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50 dark:disabled:bg-white/[0.05] dark:disabled:text-gray-500"
+                                  />
+                                )}
                               </label>
                               <label className="block">
                                 <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">API Key</span>

@@ -86,7 +86,7 @@ describe('model catalog', () => {
     const [, init] = fetchMock.mock.calls[0]
     expect(init.headers).toMatchObject({
       Authorization: 'Bearer channel-key',
-      'X-YY-API-Target': 'https://yynewapi.yangyangnj.top/v1',
+      'X-YY-API-Target': 'https://huiying.yangyangnj.top/v1',
     })
     expect(init.headers).not.toHaveProperty('X-YY-API-Purpose')
   })
