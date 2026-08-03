@@ -22,9 +22,18 @@ export interface PlaygroundModelChannel {
 export const PLAYGROUND_MODEL_CHANNELS_STORAGE_KEY = 'yy-image-pro.model-channels.v1'
 export const PLAYGROUND_MODEL_CHANNEL_KEY_SEPARATOR = '::yy-key::'
 export const BUILT_IN_NEWAPI_BASE_URLS = [
-  'https://yynewapi.yangyangnj.top/v1',
   'https://yynewapi.yangyangnj.pw/v1',
+  'https://yynewapi.yangyangnj.top/v1',
 ] as const
+export const BUILT_IN_SUBAPI_BASE_URLS = [
+  'https://yysubapi.yangyangnj.top/v1',
+  'https://yysubapi.yangyangnj.pw/v1',
+] as const
+
+const BUILT_IN_BASE_URLS_BY_CHANNEL_ID = {
+  newapi: BUILT_IN_NEWAPI_BASE_URLS,
+  subapi: BUILT_IN_SUBAPI_BASE_URLS,
+} as const
 
 export const DEFAULT_PLAYGROUND_MODEL_CHANNELS: PlaygroundModelChannel[] = [
   {
@@ -40,7 +49,7 @@ export const DEFAULT_PLAYGROUND_MODEL_CHANNELS: PlaygroundModelChannel[] = [
     id: 'subapi',
     name: 'YY SubAPI',
     apiFormat: 'openai',
-    baseUrl: 'https://yysubapi.yangyangnj.top/v1',
+    baseUrl: BUILT_IN_SUBAPI_BASE_URLS[0],
     apiKey: '',
     models: [],
     apiKeys: [{ id: 'default', name: '默认令牌', apiKey: '', models: [] }],
@@ -64,9 +73,11 @@ function getProtectedPlaygroundModelChannel(channelOrId: PlaygroundModelChannel 
 export function getProtectedPlaygroundModelChannelBaseUrl(channelOrId: PlaygroundModelChannel | string): string | null {
   const protectedChannel = getProtectedPlaygroundModelChannel(channelOrId)
   if (!protectedChannel) return null
-  if (protectedChannel.id !== 'newapi' || typeof channelOrId === 'string') return protectedChannel.baseUrl
+  if (typeof channelOrId === 'string') return protectedChannel.baseUrl
+  const options = BUILT_IN_BASE_URLS_BY_CHANNEL_ID[protectedChannel.id as keyof typeof BUILT_IN_BASE_URLS_BY_CHANNEL_ID]
+  if (!options) return protectedChannel.baseUrl
   const baseUrl = normalizePlaygroundBaseUrl(channelOrId.baseUrl)
-  return BUILT_IN_NEWAPI_BASE_URLS.includes(baseUrl as (typeof BUILT_IN_NEWAPI_BASE_URLS)[number])
+  return options.some((option) => option === baseUrl)
     ? baseUrl
     : protectedChannel.baseUrl
 }
@@ -179,9 +190,10 @@ function normalizeChannel(input: unknown, fallback?: PlaygroundModelChannel): Pl
 function mergeProtectedChannel(defaultChannel: PlaygroundModelChannel, channels: PlaygroundModelChannel[]): PlaygroundModelChannel {
   const saved = channels.find((channel) => channel.id === defaultChannel.id)
   const savedBaseUrl = normalizePlaygroundBaseUrl(saved?.baseUrl ?? '')
+  const options = BUILT_IN_BASE_URLS_BY_CHANNEL_ID[defaultChannel.id as keyof typeof BUILT_IN_BASE_URLS_BY_CHANNEL_ID]
   return {
     ...defaultChannel,
-    baseUrl: defaultChannel.id === 'newapi' && BUILT_IN_NEWAPI_BASE_URLS.includes(savedBaseUrl as (typeof BUILT_IN_NEWAPI_BASE_URLS)[number])
+    baseUrl: options?.some((option) => option === savedBaseUrl)
       ? savedBaseUrl
       : defaultChannel.baseUrl,
     name: saved?.name?.trim() || defaultChannel.name,

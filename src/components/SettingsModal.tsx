@@ -42,6 +42,7 @@ import { uniqueModelIds } from '../lib/modelIds'
 import { getStoredPlaygroundPurposeConfig, savePlaygroundPurposeConfig } from '../lib/playgroundPurposeConfig'
 import {
   BUILT_IN_NEWAPI_BASE_URLS,
+  BUILT_IN_SUBAPI_BASE_URLS,
   createPlaygroundModelChannel,
   createPlaygroundModelChannelKey,
   getPlaygroundModelChannelApiKey,
@@ -896,6 +897,7 @@ export default function SettingsModal() {
       ? {
           ...(patch.name !== undefined ? { name: patch.name } : {}),
           ...(patch.apiFormat !== undefined ? { apiFormat: patch.apiFormat } : {}),
+          ...(patch.baseUrl !== undefined ? { baseUrl: patch.baseUrl } : {}),
           ...(patch.apiKey !== undefined ? { apiKey: patch.apiKey } : {}),
           ...(patch.models !== undefined ? { models: patch.models } : {}),
           ...(patch.apiKeys !== undefined ? { apiKeys: patch.apiKeys } : {}),
@@ -2112,11 +2114,11 @@ export default function SettingsModal() {
                               </label>
                               <label className="block">
                                 <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">Base URL</span>
-                                {channel.id === 'newapi' ? (
+                                {channel.id === 'newapi' || channel.id === 'subapi' ? (
                                   <Select
                                     value={channelDisplayBaseUrl}
                                     onChange={(value) => updateChannel(channel.id, { baseUrl: value })}
-                                    options={BUILT_IN_NEWAPI_BASE_URLS.map((value) => ({ label: value, value }))}
+                                    options={(channel.id === 'newapi' ? BUILT_IN_NEWAPI_BASE_URLS : BUILT_IN_SUBAPI_BASE_URLS).map((value) => ({ label: value, value }))}
                                     className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
                                   />
                                 ) : (
