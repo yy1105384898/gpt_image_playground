@@ -1,5 +1,5 @@
-const CACHE_NAME = 'gpt-image-playground-v0.7.3'
-const APP_SHELL = ['./', './index.html', './manifest.webmanifest', './Y2-Nexus-logo.svg']
+const CACHE_NAME = 'gpt-image-playground-v0.7.6'
+const APP_SHELL = ['./', './index.html', './manifest.webmanifest', './pwa-icon.svg', './Y2-Nexus-logo.svg']
 const APP_SHELL_URLS = new Set(APP_SHELL.map((path) => new URL(path, self.registration.scope).href))
 const ASSETS_PATH = new URL('./assets/', self.registration.scope).pathname
 

@@ -181,7 +181,8 @@ export default function InputParamsPanel({
           onChange={(val) => {
             setParams({
               output_format: val as TaskParams['output_format'],
-              ...(val === 'png' ? { output_compression: null } : { transparent_output: false }),
+              ...(val === 'png' ? { output_compression: null } : {}),
+              ...(val === 'jpeg' ? { transparent_output: false } : {}),
             })
           }}
           options={[
@@ -193,7 +194,7 @@ export default function InputParamsPanel({
           className={selectClass}
         />
       </label>
-      {showTransparentOutputControl ? (
+      {showTransparentOutputControl && (
         <label
           className="relative flex flex-col gap-0.5"
           onMouseEnter={transparentOutputHint.show}
@@ -208,7 +209,10 @@ export default function InputParamsPanel({
             value={transparentOutputEnabled ? 'on' : 'off'}
             onChange={(val) => {
               if (!transparentOutputAvailable) return
-              setParams({ transparent_output: val === 'on', output_compression: null })
+              setParams({
+                transparent_output: val === 'on',
+                ...(params.output_format === 'png' ? { output_compression: null } : {}),
+              })
             }}
             options={[
               { label: 'false', value: 'off' },
@@ -220,10 +224,11 @@ export default function InputParamsPanel({
           />
           <ButtonTooltip
             visible={transparentOutputHint.visible}
-            text="基于提示词与后处理，并非模型原生生成"
+            text="实现方式可在设置的 API 配置中选择"
           />
         </label>
-      ) : (
+      )}
+      {!showTransparentOutputControl && (
         <label
           className="relative flex flex-col gap-0.5"
           onMouseEnter={compressionHint.show}
