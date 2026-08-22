@@ -1237,7 +1237,6 @@ function resolveImagePurposeApiProfile(profile: ApiProfile): ApiProfile {
     apiKey: channelApiKey || storedConfig.apiKey?.trim() || profile.apiKey,
     model,
     apiMode: 'images',
-    apiProxy: true,
   }
 }
 
