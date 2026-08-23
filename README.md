@@ -185,7 +185,7 @@
 <a id="preset-config"></a>
 ### 预置配置说明
 
-所有部署方式都可以通过环境变量提供"预置配置"——部署端预先加入用户配置列表的 API 配置。用户打开页面时会自动看到这些配置，无需手动创建，格式和用户自己创建的配置完全一致。
+所有部署方式都可以通过环境变量提供“预置配置”——部署端预先加入用户配置列表的 API 配置。用户打开页面时会自动看到这些配置，无需手动创建，格式和用户自己创建的配置完全一致。
 
 环境变量的值支持三种填写方式：
 
@@ -443,7 +443,7 @@ npm run build
 | `apiKey` | API Key | `?apiKey=sk-xxxx` |
 | `model` | 模型 ID（未传时按 apiMode 使用默认模型） | `?model=gpt-image-2` |
 | `apiMode` | `images` 或 `responses`，默认 `images` | `?apiMode=responses` |
-| `profileName` | 配置名称，默认"URL 参数配置" | `?profileName=我的配置` |
+| `profileName` | 配置名称，默认“URL 参数配置” | `?profileName=我的配置` |
 | `reasoningEffort` | Responses API 推理强度 | `?reasoningEffort=high` |
 | `codexCli` | Codex CLI 兼容模式 | `?codexCli=true` |
 | `streamImages` | 流式传输 | `?streamImages=true` |
@@ -583,7 +583,7 @@ VITE_DEFAULT_API_URL=https://example.com/gpt-image-config.json
 **创建方式：**
 
 1. **在线体验中生成**：打开 [Vercel 在线体验](https://gpt-image-playground.cooksleep.dev) 或 [GitHub Pages 在线体验](https://cooksleep.github.io/gpt_image_playground)，进入 **设置 → API 配置 → 供应商类型 → 创建自定义供应商 → AI 一键生成与导入**，粘贴第三方 API 文档让 AI 生成配置。
-2. **应用内导出**：生成完成后，在 **API 配置 → 当前配置** 右侧点击"链接按钮"复制含 `?settings=` 参数的分享 URL，可直接用作环境变量值。
+2. **应用内导出**：生成完成后，在 **API 配置 → 当前配置** 右侧点击“链接按钮”复制含 `?settings=` 参数的分享 URL，可直接用作环境变量值。
 
 也可以参考 [自定义供应商 LLM 提示词](docs/custom-provider-llm-prompt.md)，将提示词和第三方 API 文档直接发给任意 LLM，手动获取完整 JSON。
 
