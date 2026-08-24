@@ -56,12 +56,6 @@
 </tr>
 <tr>
 <td width="180" align="center" valign="middle">
-  <a href="https://qiuqiutoken.com"><img src="https://github.com/user-attachments/assets/03fd9d8d-fba0-4643-9d83-47e386267b57" alt="球球Token" width="150"></a>
-</td>
-<td valign="middle"><b><a href="https://qiuqiutoken.com">球球Token</a></b>&nbsp;是一家高速稳定务实的 AI 中转服务站，支持 gpt-image-2、Codex、Claude Code 等主流模型，100% 缓存命中、文档齐备、k8s 高可用集群、多个 CN2 GIA 接入点、售后极速响应、企业开票。</td>
-</tr>
-<tr>
-<td width="180" align="center" valign="middle">
   <a href="https://sui-xiang.com"><img src="https://github.com/user-attachments/assets/fc64d112-c820-4e2e-ad34-728b3b9c9dd8" alt="随想AI中转站" width="150"></a>
 </td>
 <td valign="middle"><b><a href="https://sui-xiang.com">随想AI中转站</a></b>&nbsp;是一家可靠高效的 API 中转服务提供商，提供 Claude、Codex、Gemini 等的中继服务。注重隐私的中转站·无数据倒卖·无模型掺水，极速售后，99.9% 可用性。新账户注册每日签到就送 0.5 元测试额度，充值 1:1。</td>
