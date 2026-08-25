@@ -347,6 +347,7 @@ export default function InputBar() {
   const imageDragPreviewRef = useRef<HTMLElement | null>(null)
   const suppressImageClickRef = useRef(false)
   const isUserInputRef = useRef(false)
+  const isComposingRef = useRef(false)
   const imageHintLockedRef = useRef(false)
   const imageHintReleaseRef = useRef<(() => void) | null>(null)
   const [cursorPos, setCursorPos] = useState(0)
@@ -841,6 +842,13 @@ export default function InputBar() {
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    // 输入法（注音/拼音等）用 Enter 确认候选字时，浏览器会派发一个 key 为 Enter 的
+    // keydown 事件；若不忽略它，会与输入法自身的候选字提交动作重叠，导致文字被
+    // 重复插入或误触发提交/换行。
+    if (e.key === 'Enter' && (e.nativeEvent.isComposing || isComposingRef.current || e.nativeEvent.keyCode === 229)) {
+      return
+    }
+
     if (showAtImageMenu) {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
@@ -1702,6 +1710,12 @@ export default function InputBar() {
                 setAtImageMenuDismissed(false)
               }}
               onKeyDown={handleKeyDown}
+              onCompositionStart={() => {
+                isComposingRef.current = true
+              }}
+              onCompositionEnd={() => {
+                isComposingRef.current = false
+              }}
               onPaste={handlePromptPaste}
               onCopy={handlePromptCopy}
               onClick={(e) => {
