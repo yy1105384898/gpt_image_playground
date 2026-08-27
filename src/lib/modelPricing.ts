@@ -115,6 +115,7 @@ function normalizeModelName(value: string): string {
 }
 
 function requestUnitLabel(value: string | undefined): string {
+  if (value === 'image' || value === 'images') return '张'
   if (value === 'task') return '任务'
   return '次'
 }
