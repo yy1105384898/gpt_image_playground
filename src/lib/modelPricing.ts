@@ -30,12 +30,23 @@ export async function fetchChannelPricingSnapshot(baseUrl: string): Promise<Chan
   if (cached?.snapshot && Date.now() - cached.fetchedAt < PRICING_CACHE_TTL_MS) return cached.snapshot
   if (cached?.promise) return cached.promise
 
-  const promise = fetch(pricingUrl, { cache: 'no-store' })
-    .then(async (response) => {
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      return normalizePricingPayload(await response.json())
-    })
-    .catch(() => emptyPricingSnapshot())
+  const promise = (async () => {
+    const requests: Array<{ url: string; headers: Record<string, string> }> = isHostedPricingProxyAvailable()
+      ? [
+          { url: '/api-pricing', headers: { 'X-YY-API-Target': baseUrl } },
+          { url: pricingUrl, headers: {} },
+        ]
+      : [{ url: pricingUrl, headers: {} }]
+    for (const request of requests) {
+      try {
+        const response = await fetch(request.url, { cache: 'no-store', headers: request.headers })
+        if (response.ok) return normalizePricingPayload(await response.json())
+      } catch {
+        // 同源代理或直连失败时继续尝试另一条路径。
+      }
+    }
+    return emptyPricingSnapshot()
+  })()
     .then((snapshot) => {
       pricingCache.set(pricingUrl, { fetchedAt: Date.now(), snapshot })
       return snapshot
@@ -118,6 +129,12 @@ function requestUnitLabel(value: string | undefined): string {
   if (value === 'image' || value === 'images') return '张'
   if (value === 'task') return '任务'
   return '次'
+}
+
+function isHostedPricingProxyAvailable(): boolean {
+  if (typeof window === 'undefined') return false
+  const pathname = window.location.pathname.replace(/\/+/g, '/')
+  return pathname === '/playground' || pathname.startsWith('/playground/') || window.location.hostname === 'huiying.yangyangnj.top'
 }
 
 function formatMoney(value: number): string {
